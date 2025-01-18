@@ -31,10 +31,11 @@ IMAGE_NAME := epp
 IMAGE_REPO ?= $(IMAGE_REGISTRY)/$(IMAGE_NAME)
 IMAGE_TAG ?= $(IMAGE_REPO):$(GIT_TAG)
 
-# Use distroless as minimal base image to package the manager binary
-# Refer to https://github.com/GoogleContainerTools/distroless for more details
-BASE_IMAGE ?= gcr.io/distroless/static:nonroot
-BUILDER_IMAGE ?= golang:$(GO_VERSION)
+BASE_IMAGE ?= gcr.io/distroless/base-debian10
+BUILDER_IMAGE ?= golang:1.23-alpine
+ifdef GO_VERSION
+BUILDER_IMAGE = golang:$(GO_VERSION)
+endif
 
 ifdef EXTRA_TAG
 IMAGE_EXTRA_TAG ?= $(IMAGE_REPO):$(EXTRA_TAG)

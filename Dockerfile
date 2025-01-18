@@ -1,5 +1,10 @@
+# Dockerfile has specific requirement to put this ARG at the beginning:
+# https://docs.docker.com/engine/reference/builder/#understand-how-arg-and-from-interact
+ARG BUILDER_IMAGE
+ARG BASE_IMAGE
+
 ## Multistage build
-FROM golang:1.23-alpine AS build
+FROM ${BUILDER_IMAGE} as builder
 ENV CGO_ENABLED=0
 ENV GOOS=linux
 ENV GOARCH=amd64
@@ -9,12 +14,11 @@ COPY . .
 WORKDIR /src/pkg/ext-proc
 RUN go mod download
 RUN go build -o /ext-proc
-FROM alpine:latest
+
 ## Multistage deploy
-FROM gcr.io/distroless/base-debian10
-# Install bash
+FROM ${BASE_IMAGE}
 
 WORKDIR /
-COPY --from=build /ext-proc /ext-proc
+COPY --from=builder /ext-proc /ext-proc
 
 ENTRYPOINT ["/ext-proc"]
