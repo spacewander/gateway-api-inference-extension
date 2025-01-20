@@ -39,11 +39,12 @@ var (
 
 func TestProvider(t *testing.T) {
 	tests := []struct {
-		name      string
-		pmc       PodMetricsClient
-		datastore *K8sDatastore
-		initErr   bool
-		want      []*PodMetrics
+		name               string
+		pmc                PodMetricsClient
+		datastore          *K8sDatastore
+		initErr            bool
+		want               []*PodMetrics
+		wantIncludingStale []*PodMetrics
 	}{
 		{
 			name: "Init success",
@@ -56,7 +57,8 @@ func TestProvider(t *testing.T) {
 					pod2.Pod: pod2,
 				},
 			},
-			want: []*PodMetrics{pod1, pod2},
+			want:               []*PodMetrics{pod1, pod2},
+			wantIncludingStale: []*PodMetrics{pod1, pod2},
 		},
 		{
 			name: "Fetch metrics error",
@@ -72,6 +74,11 @@ func TestProvider(t *testing.T) {
 				pods: populateMap(pod1.Pod, pod2.Pod),
 			},
 			want: []*PodMetrics{
+				pod1,
+				// Failed to fetch pod2 metrics so it remains the default values,
+				// which is stale.
+			},
+			wantIncludingStale: []*PodMetrics{
 				pod1,
 				// Failed to fetch pod2 metrics so it remains the default values.
 				{
@@ -100,6 +107,15 @@ func TestProvider(t *testing.T) {
 			}
 			if diff := cmp.Diff(test.want, metrics, cmpopts.SortSlices(lessFunc)); diff != "" {
 				t.Errorf("Unexpected output (-want +got): %v", diff)
+			}
+
+			// Then check for AllPodMetricsIncludingStale
+			if len(test.wantIncludingStale) > 0 {
+				metricsIncludingStale := p.AllPodMetricsIncludingStale()
+				if diff := cmp.Diff(test.wantIncludingStale, metricsIncludingStale, cmpopts.SortSlices(lessFunc)); diff != "" {
+					t.Errorf("Unexpected output (-want +got): %v", diff)
+				}
+
 			}
 		})
 	}

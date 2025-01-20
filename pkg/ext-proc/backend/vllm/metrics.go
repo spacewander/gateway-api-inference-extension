@@ -49,22 +49,23 @@ func (p *PodMetricsClientImpl) FetchMetrics(
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		klog.Errorf("failed to fetch metrics from %s: %v", pod, err)
-		return nil, fmt.Errorf("failed to fetch metrics from %s: %w", pod, err)
+		// As we use a short fetch timeout to ensure the metrics are up-to-date, there will be a lot
+		// of timeout of error even only 0.1% requests are timed out.
+		// Return the raw error so that the caller can filter out it via errors.Is(err, context.Canceled)
+		return nil, err
 	}
 	defer func() {
 		_ = resp.Body.Close()
 	}()
 
 	if resp.StatusCode != http.StatusOK {
-		klog.Errorf("unexpected status code from %s: %v", pod, resp.StatusCode)
 		return nil, fmt.Errorf("unexpected status code from %s: %v", pod, resp.StatusCode)
 	}
 
 	parser := expfmt.TextParser{}
 	metricFamilies, err := parser.TextToMetricFamilies(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse metrics from %s: %w", pod, err)
 	}
 	return promToPodMetrics(metricFamilies, existing)
 }

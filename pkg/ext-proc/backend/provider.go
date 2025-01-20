@@ -2,16 +2,13 @@ package backend
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
 
 	"go.uber.org/multierr"
 	klog "k8s.io/klog/v2"
-)
-
-const (
-	fetchMetricsTimeout = 5 * time.Second
 )
 
 func NewProvider(pmc PodMetricsClient, datastore *K8sDatastore) *Provider {
@@ -35,10 +32,31 @@ type PodMetricsClient interface {
 	FetchMetrics(ctx context.Context, pod Pod, existing *PodMetrics) (*PodMetrics, error)
 }
 
+func isPodMetricsStale(pm *PodMetrics) bool {
+	// TODO: make it configurable
+	return time.Since(pm.UpdatedTime) > 5*time.Second
+}
+
 func (p *Provider) AllPodMetrics() []*PodMetrics {
+	return p.allPodMetrics(false)
+}
+
+func (p *Provider) AllPodMetricsIncludingStale() []*PodMetrics {
+	return p.allPodMetrics(true)
+}
+
+func (p *Provider) allPodMetrics(staleIncluded bool) []*PodMetrics {
 	res := []*PodMetrics{}
 	fn := func(k, v any) bool {
-		res = append(res, v.(*PodMetrics))
+		m := v.(*PodMetrics)
+
+		if !staleIncluded && isPodMetricsStale(m) {
+			// exclude stale metrics for scheduler
+			klog.V(4).Infof("Pod metrics for %s is stale, skipping", m.Pod)
+			return true
+		}
+
+		res = append(res, m)
 		return true
 	}
 	p.podMetrics.Range(fn)
@@ -46,12 +64,14 @@ func (p *Provider) AllPodMetrics() []*PodMetrics {
 }
 
 func (p *Provider) UpdatePodMetrics(pod Pod, pm *PodMetrics) {
+	pm.UpdatedTime = time.Now()
 	p.podMetrics.Store(pod, pm)
 }
 
 func (p *Provider) GetPodMetrics(pod Pod) (*PodMetrics, bool) {
 	val, ok := p.podMetrics.Load(pod)
 	if ok {
+		// For now, we don't exclude stale metrics with GET operation.
 		return val.(*PodMetrics), true
 	}
 	return nil, false
@@ -60,11 +80,11 @@ func (p *Provider) GetPodMetrics(pod Pod) (*PodMetrics, bool) {
 func (p *Provider) Init(refreshPodsInterval, refreshMetricsInterval time.Duration) error {
 	p.refreshPodsOnce()
 
-	if err := p.refreshMetricsOnce(); err != nil {
+	if err := p.refreshMetricsOnce(refreshMetricsInterval); err != nil {
 		klog.Errorf("Failed to init metrics: %v", err)
 	}
 
-	klog.Infof("Initialized pods and metrics: %+v", p.AllPodMetrics())
+	klog.Infof("Initialized pods and metrics: %+v", p.AllPodMetricsIncludingStale())
 
 	// periodically refresh pods
 	go func() {
@@ -76,10 +96,18 @@ func (p *Provider) Init(refreshPodsInterval, refreshMetricsInterval time.Duratio
 
 	// periodically refresh metrics
 	go func() {
+		time.Sleep(refreshMetricsInterval)
 		for {
-			time.Sleep(refreshMetricsInterval)
-			if err := p.refreshMetricsOnce(); err != nil {
-				klog.V(4).Infof("Failed to refresh metrics: %v", err)
+			start := time.Now()
+
+			if err := p.refreshMetricsOnce(refreshMetricsInterval); err != nil {
+				klog.Errorf("Failed to refresh metrics: %v", err)
+			}
+
+			now := time.Now()
+			used := now.Sub(start)
+			if used < refreshMetricsInterval {
+				time.Sleep(refreshMetricsInterval - used)
 			}
 		}
 	}()
@@ -89,7 +117,7 @@ func (p *Provider) Init(refreshPodsInterval, refreshMetricsInterval time.Duratio
 		go func() {
 			for {
 				time.Sleep(5 * time.Second)
-				klog.Infof("===DEBUG: Current Pods and metrics: %+v", p.AllPodMetrics())
+				klog.Infof("===DEBUG: Current Pods and metrics: %+v", p.AllPodMetricsIncludingStale())
 			}
 		}()
 	}
@@ -127,8 +155,8 @@ func (p *Provider) refreshPodsOnce() {
 	p.datastore.pods.Range(addNewPods)
 }
 
-func (p *Provider) refreshMetricsOnce() error {
-	ctx, cancel := context.WithTimeout(context.Background(), fetchMetricsTimeout)
+func (p *Provider) refreshMetricsOnce(interval time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), interval)
 	defer cancel()
 	start := time.Now()
 	defer func() {
@@ -147,7 +175,12 @@ func (p *Provider) refreshMetricsOnce() error {
 			defer wg.Done()
 			updated, err := p.pmc.FetchMetrics(ctx, pod, existing)
 			if err != nil {
-				errCh <- fmt.Errorf("failed to parse metrics from %s: %v", pod, err)
+				// handle timeout error as less severe error
+				if errors.Is(err, context.Canceled) {
+					klog.V(4).Infof("Timeout fetching metrics for pod %s", pod)
+				} else {
+					errCh <- fmt.Errorf("failed to fetch metrics from %s: %v", pod, err)
+				}
 				return
 			}
 			p.UpdatePodMetrics(pod, updated)
