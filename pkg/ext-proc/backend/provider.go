@@ -85,7 +85,7 @@ func (p *Provider) Init(refreshPodsInterval, refreshMetricsInterval time.Duratio
 	}()
 
 	// Periodically print out the pods and metrics for DEBUGGING.
-	if klog.V(2).Enabled() {
+	if klog.V(4).Enabled() {
 		go func() {
 			for {
 				time.Sleep(5 * time.Second)
