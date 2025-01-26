@@ -12,8 +12,8 @@ import (
 // for debugging and catching error.
 func TestMain(m *testing.M) {
 	klog.InitFlags(nil)
-	flag.Set("logtostderr", "true") // Log to stderr instead of files
-	flag.Set("v", "4")              // Log level
+	_ = flag.Set("logtostderr", "true") // Log to stderr instead of files
+	_ = flag.Set("v", "4")              // Log level
 	flag.Parse()
 
 	os.Exit(m.Run())
