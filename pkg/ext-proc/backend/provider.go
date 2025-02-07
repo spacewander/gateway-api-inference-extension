@@ -106,7 +106,7 @@ func (p *Provider) Init(refreshPodsInterval, refreshMetricsInterval time.Duratio
 				time.Sleep(5 * time.Second)
 				podMetrics := p.AllPodMetricsIncludingStale()
 				stalePodMetrics := make([]*PodMetrics, 0)
-				freshPodMetrics := make([]*PodMetrics, 0, len(podMetrics))
+				freshPodMetrics := make([]*PodMetrics, 0)
 				for _, pm := range podMetrics {
 					if isPodMetricsStale(pm) {
 						stalePodMetrics = append(stalePodMetrics, pm)
