@@ -5,7 +5,6 @@ import (
 	"sync"
 	"time"
 
-	"go.uber.org/multierr"
 	logutil "inference.networking.x-k8s.io/gateway-api-inference-extension/pkg/ext-proc/util/logging"
 	klog "k8s.io/klog/v2"
 )
@@ -45,29 +44,36 @@ type PodMetricsClient interface {
 }
 
 func isPodMetricsStale(pm *PodMetrics) bool {
-	return time.Since(pm.UpdatedTime) > metricsValidityPeriod
+	return time.Since(pm.Metrics.UpdatedTime) > metricsValidityPeriod
 }
 
-func (p *Provider) AllPodMetrics() []*PodMetrics {
+func (p *Provider) AllFreshPodMetrics() []*PodMetrics {
 	return p.allPodMetrics(false)
 }
 
-func (p *Provider) AllPodMetricsIncludingStale() []*PodMetrics {
+func (p *Provider) AllStalePodMetrics() []*PodMetrics {
 	return p.allPodMetrics(true)
 }
 
-func (p *Provider) allPodMetrics(staleIncluded bool) []*PodMetrics {
+func (p *Provider) allPodMetrics(stale bool) []*PodMetrics {
 	res := []*PodMetrics{}
 	fn := func(k, v any) bool {
 		m := v.(*PodMetrics)
 
-		if !staleIncluded && isPodMetricsStale(m) {
-			// exclude stale metrics for scheduler
-			klog.V(4).Infof("Pod metrics for %s is stale, skipping", m.Pod)
-			return true
+		if !stale {
+			if isPodMetricsStale(m) {
+				// exclude stale metrics for scheduler
+				klog.V(4).Infof("Pod metrics for %s is stale, skipping", m.Pod)
+			} else {
+				res = append(res, m)
+			}
+
+		} else {
+			if isPodMetricsStale(m) {
+				res = append(res, m)
+			}
 		}
 
-		res = append(res, m)
 		return true
 	}
 	p.podMetrics.Range(fn)
@@ -75,7 +81,7 @@ func (p *Provider) allPodMetrics(staleIncluded bool) []*PodMetrics {
 }
 
 func (p *Provider) UpdatePodMetrics(pod Pod, pm *PodMetrics) {
-	pm.UpdatedTime = time.Now()
+	pm.Metrics.UpdatedTime = time.Now()
 	p.podMetrics.Store(pod, pm)
 	klog.V(4).Infof("Updated metrics for pod %s: %v", pod, pm.Metrics)
 }
@@ -90,14 +96,12 @@ func (p *Provider) GetPodMetrics(pod Pod) (*PodMetrics, bool) {
 	return nil, false
 }
 
-func (p *Provider) Init(refreshPodsInterval, refreshMetricsInterval time.Duration) error {
-	p.refreshPodsOnce(refreshMetricsInterval)
-
+func (p *Provider) Init(refreshPodsInterval, refreshMetricsInterval, refreshMetricsTimeout time.Duration) error {
 	// periodically refresh pods
 	go func() {
 		for {
+			p.refreshPodsOnce(refreshMetricsInterval, refreshMetricsTimeout)
 			time.Sleep(refreshPodsInterval)
-			p.refreshPodsOnce(refreshMetricsInterval)
 		}
 	}()
 
@@ -106,17 +110,18 @@ func (p *Provider) Init(refreshPodsInterval, refreshMetricsInterval time.Duratio
 		go func() {
 			for {
 				time.Sleep(5 * time.Second)
-				podMetrics := p.AllPodMetricsIncludingStale()
-				stalePodMetrics := make([]*PodMetrics, 0)
+				podMetrics := p.AllFreshPodMetrics()
 				freshPodMetrics := make([]*PodMetrics, 0)
 				for _, pm := range podMetrics {
-					if isPodMetricsStale(pm) {
-						stalePodMetrics = append(stalePodMetrics, pm)
-					} else {
-						freshPodMetrics = append(freshPodMetrics, pm)
-					}
+					freshPodMetrics = append(freshPodMetrics, pm)
 				}
 				klog.Infof("===DEBUG: Current Pods and metrics: %+v", freshPodMetrics)
+
+				podMetrics = p.AllStalePodMetrics()
+				stalePodMetrics := make([]*PodMetrics, 0)
+				for _, pm := range podMetrics {
+					stalePodMetrics = append(stalePodMetrics, pm)
+				}
 				klog.Infof("===DEBUG: Stale Pods and metrics: %+v", stalePodMetrics)
 			}
 		}()
@@ -127,7 +132,7 @@ func (p *Provider) Init(refreshPodsInterval, refreshMetricsInterval time.Duratio
 
 // refreshPodsOnce lists pods and updates keys in the podMetrics map.
 // Note this function doesn't update the PodMetrics value, it's done separately.
-func (p *Provider) refreshPodsOnce(refreshMetricsInterval time.Duration) {
+func (p *Provider) refreshPodsOnce(refreshMetricsInterval, refreshMetricsTimeout time.Duration) {
 	// merge new pods with cached ones.
 	// add new pod to the map
 	addNewPods := func(k, v any) bool {
@@ -142,7 +147,7 @@ func (p *Provider) refreshPodsOnce(refreshMetricsInterval time.Duration) {
 			}
 			p.podMetrics.Store(pod, new)
 
-			refresher := NewPodMetricsRefresher(p, pod, refreshMetricsInterval)
+			refresher := NewPodMetricsRefresher(p, pod, refreshMetricsInterval, refreshMetricsTimeout)
 			refresher.start()
 			p.podMetricsRefresher.Store(pod, refresher)
 		}

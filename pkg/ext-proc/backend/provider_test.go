@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/stretchr/testify/assert"
 )
 
 var (
@@ -39,12 +40,12 @@ var (
 
 func TestProvider(t *testing.T) {
 	tests := []struct {
-		name               string
-		pmc                PodMetricsClient
-		datastore          *K8sDatastore
-		initErr            bool
-		want               []*PodMetrics
-		wantIncludingStale []*PodMetrics
+		name      string
+		pmc       PodMetricsClient
+		datastore *K8sDatastore
+		initErr   bool
+		want      []*PodMetrics
+		wantStale []*PodMetrics
 	}{
 		{
 			name: "Init success",
@@ -57,8 +58,7 @@ func TestProvider(t *testing.T) {
 					pod2.Pod: pod2,
 				},
 			},
-			want:               []*PodMetrics{pod1, pod2},
-			wantIncludingStale: []*PodMetrics{pod1, pod2},
+			want: []*PodMetrics{pod1, pod2},
 		},
 		{
 			name: "Fetch metrics error",
@@ -78,8 +78,7 @@ func TestProvider(t *testing.T) {
 				// Failed to fetch pod2 metrics so it remains the default values,
 				// which is stale.
 			},
-			wantIncludingStale: []*PodMetrics{
-				pod1,
+			wantStale: []*PodMetrics{
 				// Failed to fetch pod2 metrics so it remains the default values.
 				{
 					Pod: Pod{Name: "pod2", Address: "127.0.0.2"},
@@ -97,7 +96,7 @@ func TestProvider(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			p := NewProvider(test.pmc, test.datastore)
-			err := p.Init(10*time.Millisecond, time.Millisecond)
+			err := p.Init(10*time.Millisecond, time.Millisecond, time.Second)
 			if test.initErr != (err != nil) {
 				t.Fatalf("Unexpected error, got: %v, want: %v", err, test.initErr)
 			}
@@ -105,7 +104,7 @@ func TestProvider(t *testing.T) {
 			// do some turns of refreshing...
 			time.Sleep(3 * time.Millisecond)
 
-			metrics := p.AllPodMetrics()
+			metrics := p.AllFreshPodMetrics()
 			metricsCopy := make([]*PodMetrics, len(metrics))
 			for i, pm := range metrics {
 				if pm.UpdatedTime.IsZero() {
@@ -124,18 +123,18 @@ func TestProvider(t *testing.T) {
 				t.Errorf("Unexpected output (-want +got): %v", diff)
 			}
 
-			// then check for AllPodMetricsIncludingStale
-			if len(test.wantIncludingStale) > 0 {
-				metricsIncludingStale := p.AllPodMetricsIncludingStale()
-				metricsCopy := make([]*PodMetrics, len(metricsIncludingStale))
-				for i, pm := range metricsIncludingStale {
+			// then check for AllStalePodMetrics
+			if len(test.wantStale) > 0 {
+				staleMetrics := p.AllStalePodMetrics()
+				metricsCopy := make([]*PodMetrics, len(staleMetrics))
+				for i, pm := range staleMetrics {
 					cp := pm.Clone()
 					// reset the UpdatedTime for comparison
 					cp.UpdatedTime = time.Time{}
 					metricsCopy[i] = cp
 				}
 
-				if diff := cmp.Diff(test.wantIncludingStale, metricsCopy, cmpopts.SortSlices(lessFunc)); diff != "" {
+				if diff := cmp.Diff(test.wantStale, metricsCopy, cmpopts.SortSlices(lessFunc)); diff != "" {
 					t.Errorf("Unexpected output (-want +got): %v", diff)
 				}
 			}
@@ -145,12 +144,10 @@ func TestProvider(t *testing.T) {
 				p.datastore.pods.Delete(k)
 				return true
 			})
-			time.Sleep(20 * time.Millisecond)
-			metrics = p.AllPodMetrics()
-			// ensure no update is writing to the PodMetrics by background refreshing
-			if len(metrics) != 0 {
-				t.Errorf("Expected no metrics, got %v", metrics)
-			}
+			assert.Eventuallyf(t, func() bool {
+				// ensure no update is writing to the PodMetrics by background refreshing
+				return len(p.AllFreshPodMetrics()) == 0
+			}, 100*time.Millisecond, 10*time.Millisecond, "Expected no metrics, got %v", p.AllFreshPodMetrics())
 		})
 	}
 }

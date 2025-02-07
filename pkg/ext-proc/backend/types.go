@@ -26,18 +26,18 @@ type Metrics struct {
 	WaitingQueueSize        int
 	KVCacheUsagePercent     float64
 	KvCacheMaxTokenCapacity int
-}
-
-type PodMetrics struct {
-	Pod
-	Metrics
 
 	// UpdatedTime record the time when the metrics are updated.
 	UpdatedTime time.Time
 }
 
+type PodMetrics struct {
+	Pod
+	Metrics
+}
+
 func (pm *PodMetrics) String() string {
-	return fmt.Sprintf("Pod: %+v; Metrics: %+v; UpdatedTime: %s", pm.Pod, pm.Metrics, pm.UpdatedTime)
+	return fmt.Sprintf("Pod: %+v; Metrics: %+v", pm.Pod, pm.Metrics)
 }
 
 func (pm *PodMetrics) Clone() *PodMetrics {
@@ -54,8 +54,8 @@ func (pm *PodMetrics) Clone() *PodMetrics {
 			WaitingQueueSize:        pm.WaitingQueueSize,
 			KVCacheUsagePercent:     pm.KVCacheUsagePercent,
 			KvCacheMaxTokenCapacity: pm.KvCacheMaxTokenCapacity,
+			UpdatedTime:             pm.UpdatedTime,
 		},
-		UpdatedTime: pm.UpdatedTime,
 	}
 	return clone
 }

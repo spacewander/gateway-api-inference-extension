@@ -69,6 +69,10 @@ var (
 		"refreshMetricsInterval",
 		runserver.DefaultRefreshMetricsInterval,
 		"interval to refresh metrics")
+	refreshMetricsTimeout = flag.Duration(
+		"refreshMetricsTimeout",
+		runserver.DefaultRefreshMetricsTimeout,
+		"timeout of metrics refreshing")
 
 	scheme = runtime.NewScheme()
 )
@@ -110,6 +114,7 @@ func main() {
 		Zone:                   *zone,
 		RefreshPodsInterval:    *refreshPodsInterval,
 		RefreshMetricsInterval: *refreshMetricsInterval,
+		RefreshMetricsTimeout:  *refreshMetricsTimeout,
 		Scheme:                 scheme,
 		Config:                 ctrl.GetConfigOrDie(),
 		Datastore:              datastore,

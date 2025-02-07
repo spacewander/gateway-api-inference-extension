@@ -7,24 +7,21 @@ import (
 	klog "k8s.io/klog/v2"
 )
 
-const (
-	// TODO: make it configurable
-	fetchMetricsTimeout = 1 * time.Second
-)
-
 type PodMetricsRefresher struct {
 	done     chan struct{}
 	interval time.Duration
+	timeout  time.Duration
 
 	// refresher holds provider & pod so it can update the metrics concurrent-safely.
 	pod      Pod
 	provider *Provider
 }
 
-func NewPodMetricsRefresher(provider *Provider, pod Pod, interval time.Duration) *PodMetricsRefresher {
+func NewPodMetricsRefresher(provider *Provider, pod Pod, interval, timeout time.Duration) *PodMetricsRefresher {
 	return &PodMetricsRefresher{
 		done:     make(chan struct{}),
 		interval: interval,
+		timeout:  timeout,
 		pod:      pod,
 		provider: provider,
 	}
@@ -51,7 +48,7 @@ func (r *PodMetricsRefresher) start() {
 }
 
 func (r *PodMetricsRefresher) refreshMetrics() error {
-	ctx, cancel := context.WithTimeout(context.Background(), fetchMetricsTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), r.timeout)
 	defer cancel()
 
 	pod := r.pod

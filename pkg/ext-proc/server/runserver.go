@@ -27,6 +27,7 @@ type ExtProcServerRunner struct {
 	Zone                   string
 	RefreshPodsInterval    time.Duration
 	RefreshMetricsInterval time.Duration
+	RefreshMetricsTimeout  time.Duration
 	Scheme                 *runtime.Scheme
 	Config                 *rest.Config
 	Datastore              *backend.K8sDatastore
@@ -43,6 +44,7 @@ const (
 	DefaultZone                   = ""                               // default for --zone
 	DefaultRefreshPodsInterval    = 10 * time.Second                 // default for --refreshPodsInterval
 	DefaultRefreshMetricsInterval = 50 * time.Millisecond            // default for --refreshMetricsInterval
+	DefaultRefreshMetricsTimeout  = 1 * time.Second                  // default for --refreshMetricsTimeout
 )
 
 func NewDefaultExtProcServerRunner() *ExtProcServerRunner {
@@ -123,7 +125,7 @@ func (r *ExtProcServerRunner) Start(
 
 		// Initialize backend provider
 		pp := backend.NewProvider(podMetricsClient, podDatastore)
-		if err := pp.Init(r.RefreshPodsInterval, r.RefreshMetricsInterval); err != nil {
+		if err := pp.Init(r.RefreshPodsInterval, r.RefreshMetricsInterval, r.RefreshMetricsTimeout); err != nil {
 			klog.Fatalf("Failed to initialize backend provider: %v", err)
 		}
 
