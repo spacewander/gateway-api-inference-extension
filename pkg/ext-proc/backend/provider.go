@@ -111,18 +111,10 @@ func (p *Provider) Init(refreshPodsInterval, refreshMetricsInterval, refreshMetr
 			for {
 				time.Sleep(5 * time.Second)
 				podMetrics := p.AllFreshPodMetrics()
-				freshPodMetrics := make([]*PodMetrics, 0)
-				for _, pm := range podMetrics {
-					freshPodMetrics = append(freshPodMetrics, pm)
-				}
-				klog.Infof("===DEBUG: Current Pods and metrics: %+v", freshPodMetrics)
+				klog.Infof("===DEBUG: Current Pods and metrics: %+v", podMetrics)
 
 				podMetrics = p.AllStalePodMetrics()
-				stalePodMetrics := make([]*PodMetrics, 0)
-				for _, pm := range podMetrics {
-					stalePodMetrics = append(stalePodMetrics, pm)
-				}
-				klog.Infof("===DEBUG: Stale Pods and metrics: %+v", stalePodMetrics)
+				klog.Infof("===DEBUG: Stale Pods and metrics: %+v", podMetrics)
 			}
 		}()
 	}
