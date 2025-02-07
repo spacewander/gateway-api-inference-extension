@@ -5,6 +5,8 @@ import (
 	"sync"
 	"time"
 
+	"go.uber.org/multierr"
+	logutil "inference.networking.x-k8s.io/gateway-api-inference-extension/pkg/ext-proc/util/logging"
 	klog "k8s.io/klog/v2"
 )
 
@@ -100,7 +102,7 @@ func (p *Provider) Init(refreshPodsInterval, refreshMetricsInterval time.Duratio
 	}()
 
 	// Periodically print out the pods and metrics for DEBUGGING.
-	if klog.V(4).Enabled() {
+	if klog.V(logutil.DEBUG).Enabled() {
 		go func() {
 			for {
 				time.Sleep(5 * time.Second)

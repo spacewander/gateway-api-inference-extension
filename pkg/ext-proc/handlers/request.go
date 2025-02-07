@@ -8,8 +8,10 @@ import (
 
 	configPb "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	extProcPb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+	"google.golang.org/protobuf/types/known/structpb"
 	"inference.networking.x-k8s.io/gateway-api-inference-extension/pkg/ext-proc/backend"
 	"inference.networking.x-k8s.io/gateway-api-inference-extension/pkg/ext-proc/scheduling"
+	logutil "inference.networking.x-k8s.io/gateway-api-inference-extension/pkg/ext-proc/util/logging"
 	klog "k8s.io/klog/v2"
 )
 
@@ -17,7 +19,7 @@ import (
 // parameter.
 // Envoy sends the request body to ext proc before sending the request to the backend server.
 func (s *Server) HandleRequestBody(reqCtx *RequestContext, req *extProcPb.ProcessingRequest) (*extProcPb.ProcessingResponse, error) {
-	klog.V(3).Infof("Handling request body")
+	klog.V(logutil.VERBOSE).Infof("Handling request body")
 
 	// Unmarshal request body (must be JSON).
 	v := req.Request.(*extProcPb.ProcessingRequest_RequestBody)
@@ -26,14 +28,14 @@ func (s *Server) HandleRequestBody(reqCtx *RequestContext, req *extProcPb.Proces
 		klog.Errorf("Error unmarshaling request body: %v", err)
 		return nil, fmt.Errorf("error unmarshaling request body: %v", err)
 	}
-	klog.V(3).Infof("Request body: %v", rb)
+	klog.V(logutil.VERBOSE).Infof("Request body: %v", rb)
 
 	// Resolve target models.
 	model, ok := rb["model"].(string)
 	if !ok {
 		return nil, errors.New("model not found in request")
 	}
-	klog.V(3).Infof("Model requested: %v", model)
+	klog.V(logutil.VERBOSE).Infof("Model requested: %v", model)
 	modelName := model
 
 	// NOTE: The nil checking for the modelObject means that we DO allow passthrough currently.
@@ -54,7 +56,7 @@ func (s *Server) HandleRequestBody(reqCtx *RequestContext, req *extProcPb.Proces
 		ResolvedTargetModel: modelName,
 		Critical:            backend.IsCritical(modelObj),
 	}
-	klog.V(3).Infof("LLM Request: %+v", llmReq)
+	klog.V(logutil.VERBOSE).Infof("LLM Request: %+v", llmReq)
 
 	requestBody := v.RequestBody.Body
 	var err error
@@ -66,25 +68,25 @@ func (s *Server) HandleRequestBody(reqCtx *RequestContext, req *extProcPb.Proces
 			klog.Errorf("Error marshaling request body: %v", err)
 			return nil, fmt.Errorf("error marshaling request body: %v", err)
 		}
-		klog.V(3).Infof("Updated body: %v", string(requestBody))
+		klog.V(logutil.VERBOSE).Infof("Updated body: %v", string(requestBody))
 	}
 
 	targetPod, err := s.scheduler.Schedule(llmReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find target pod: %w", err)
 	}
-	klog.V(3).Infof("Selected target model %v in target pod: %v\n", llmReq.ResolvedTargetModel, targetPod)
+	klog.V(logutil.VERBOSE).Infof("Selected target model %v in target pod: %v\n", llmReq.ResolvedTargetModel, targetPod)
 
 	reqCtx.Model = llmReq.Model
 	reqCtx.ResolvedTargetModel = llmReq.ResolvedTargetModel
 	reqCtx.RequestSize = len(v.RequestBody.Body)
 	reqCtx.TargetPod = targetPod
 
-	// Insert "target-pod" to instruct Envoy to route requests to the specified target pod.
+	// Insert target endpoint to instruct Envoy to route requests to the specified target pod.
 	headers := []*configPb.HeaderValueOption{
 		{
 			Header: &configPb.HeaderValue{
-				Key:      s.targetPodHeader,
+				Key:      s.targetEndpointKey,
 				RawValue: []byte(targetPod.Address),
 			},
 		},
@@ -99,10 +101,13 @@ func (s *Server) HandleRequestBody(reqCtx *RequestContext, req *extProcPb.Proces
 	}
 	// Print headers for debugging
 	for _, header := range headers {
-		klog.V(3).Infof("[request_body] Header Key: %s, Header Value: %s\n", header.Header.Key, header.Header.RawValue)
+		klog.V(logutil.VERBOSE).Infof("[request_body] Header Key: %s, Header Value: %s\n", header.Header.Key, header.Header.RawValue)
 	}
 
 	resp := &extProcPb.ProcessingResponse{
+		// The Endpoint Picker supports two approaches to communicating the target endpoint, as a request header
+		// and as an unstructure ext-proc response metadata key/value pair. This enables different integration
+		// options for gateway providers.
 		Response: &extProcPb.ProcessingResponse_RequestBody{
 			RequestBody: &extProcPb.BodyResponse{
 				Response: &extProcPb.CommonResponse{
@@ -117,15 +122,24 @@ func (s *Server) HandleRequestBody(reqCtx *RequestContext, req *extProcPb.Proces
 				},
 			},
 		},
+		DynamicMetadata: &structpb.Struct{
+			Fields: map[string]*structpb.Value{
+				s.targetEndpointKey: {
+					Kind: &structpb.Value_StringValue{
+						StringValue: targetPod.Address,
+					},
+				},
+			},
+		},
 	}
 	return resp, nil
 }
 
 func HandleRequestHeaders(reqCtx *RequestContext, req *extProcPb.ProcessingRequest) *extProcPb.ProcessingResponse {
-	klog.V(3).Info("Handling request headers ...")
+	klog.V(logutil.VERBOSE).Info("Handling request headers ...")
 	r := req.Request
 	h := r.(*extProcPb.ProcessingRequest_RequestHeaders)
-	klog.V(3).Infof("Headers: %+v\n", h)
+	klog.V(logutil.VERBOSE).Infof("Headers: %+v\n", h)
 
 	resp := &extProcPb.ProcessingResponse{
 		Response: &extProcPb.ProcessingResponse_RequestHeaders{

@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"inference.networking.x-k8s.io/gateway-api-inference-extension/api/v1alpha1"
+	logutil "inference.networking.x-k8s.io/gateway-api-inference-extension/pkg/ext-proc/util/logging"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
@@ -24,7 +25,7 @@ func (c *InferenceModelReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	if req.Namespace != c.PoolNamespacedName.Namespace {
 		return ctrl.Result{}, nil
 	}
-	klog.V(1).Info("reconciling InferenceModel", req.NamespacedName)
+	klog.V(1).Infof("reconciling InferenceModel %v", req.NamespacedName)
 
 	service := &v1alpha1.InferenceModel{}
 	if err := c.Get(ctx, req.NamespacedName, service); err != nil {
@@ -49,7 +50,7 @@ func (c *InferenceModelReconciler) updateDatastore(infModel *v1alpha1.InferenceM
 		c.Datastore.InferenceModels.Store(infModel.Spec.ModelName, infModel)
 		return
 	}
-	klog.V(2).Infof("Removing/Not adding inference model: %v", infModel.Spec.ModelName)
+	klog.V(logutil.DEFAULT).Infof("Removing/Not adding inference model: %v", infModel.Spec.ModelName)
 	// If we get here. The model is not relevant to this pool, remove.
 	c.Datastore.InferenceModels.Delete(infModel.Spec.ModelName)
 }

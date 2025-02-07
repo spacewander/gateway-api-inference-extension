@@ -8,25 +8,17 @@ This extension is intented to provide value to multiplexed LLM services on a sha
 
 This project is currently in development. 
 
-For more rapid testing, our PoC is in the `./examples/` dir.
-
-
 ## Getting Started
 
-**Install the CRDs into the cluster:**
+Follow this [README](./pkg/README.md) to get the inference-extension up and running on your cluster!
 
-```sh
-make install
-```
+## End-to-End Tests
 
-**Delete the APIs(CRDs) from the cluster:**
+Follow this [README](./test/e2e/README.md) to learn more about running the inference-extension end-to-end test suite on your cluster.
 
-```sh
-make uninstall
-```
+## Website
 
-**Deploying the ext-proc image**
-Refer to this [README](https://github.com/kubernetes-sigs/gateway-api-inference-extension/blob/main/pkg/README.md) on how to deploy the Ext-Proc image.
+Detailed documentation is available on our website: https://gateway-api-inference-extension.sigs.k8s.io/
 
 ## Contributing
 

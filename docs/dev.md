@@ -27,6 +27,7 @@ const(
     DEFAULT=2
     VERBOSE=3
     DEBUG=4
+    TRACE=5
 )
 ```
 
@@ -54,12 +55,12 @@ The guidelines are written in the context of a k8s controller. Our [ext-proc](..
    * `V(DEBUG)` and above: Use your best judgement. 
 
 4. Metric scraping loops. These loops run at a very high frequency, and logs can be very spammy if not handled properly.
-    * `klog.V(DEBUG).InfoS`
+    * `klog.V(TRACE).InfoS`
       * Transient errors/warnings, such as failure to get response from a pod.
       * Important state changes, such as updating a metric.
 
 5. Misc 
    1. Periodic (every 5s) debug loop which prints the current pods and metrics.
       * `klog.WarningS` If the metrics are not fresh enough, which indicates an error occurred during the metric scraping loop.
-      * `klog.V(VERBOSE).InfoS`
+      * `klog.V(DEBUG).InfoS`
          *  This is very important to debug the request scheduling algorithm, and yet not spammy compared to the metric scraping loop logs.

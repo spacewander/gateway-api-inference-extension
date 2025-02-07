@@ -59,7 +59,89 @@ type InferencePoolSpec struct {
 	// +kubebuilder:validation:Maximum=65535
 	// +kubebuilder:validation:Required
 	TargetPortNumber int32 `json:"targetPortNumber"`
+
+	// EndpointPickerConfig specifies the configuration needed by the proxy to discover and connect to the endpoint
+	// picker service that picks endpoints for the requests routed to this pool.
+	EndpointPickerConfig `json:",inline"`
 }
+
+// EndpointPickerConfig specifies the configuration needed by the proxy to discover and connect to the endpoint picker extension.
+// This type is intended to be a union of mutually exclusive configuration options that we may add in the future.
+type EndpointPickerConfig struct {
+	// Extension configures an endpoint picker as an extension service.
+	//
+	// +kubebuilder:validation:Required
+	ExtensionRef *Extension `json:"extensionRef,omitempty"`
+}
+
+// Extension specifies how to configure an extension that runs the endpoint picker.
+type Extension struct {
+	// Reference is a reference to a service extension.
+	ExtensionReference `json:",inline"`
+
+	// ExtensionConnection configures the connection between the gateway and the extension.
+	ExtensionConnection `json:",inline"`
+}
+
+// ExtensionReference is a reference to the extension deployment.
+type ExtensionReference struct {
+	// Group is the group of the referent.
+	// When unspecified or empty string, core API group is inferred.
+	//
+	// +optional
+	// +kubebuilder:default=""
+	Group *string `json:"group,omitempty"`
+
+	// Kind is the Kubernetes resource kind of the referent. For example
+	// "Service".
+	//
+	// Defaults to "Service" when not specified.
+	//
+	// ExternalName services can refer to CNAME DNS records that may live
+	// outside of the cluster and as such are difficult to reason about in
+	// terms of conformance. They also may not be safe to forward to (see
+	// CVE-2021-25740 for more information). Implementations MUST NOT
+	// support ExternalName Services.
+	//
+	// +optional
+	// +kubebuilder:default=Service
+	Kind *string `json:"kind,omitempty"`
+
+	// Name is the name of the referent.
+	//
+	// +kubebuilder:validation:Required
+	Name string `json:"name"`
+
+	// The port number on the pods running the extension. When unspecified, implementations SHOULD infer a
+	// default value of 9002 when the Kind is Service.
+	//
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	// +optional
+	TargetPortNumber *int32 `json:"targetPortNumber,omitempty"`
+}
+
+// ExtensionConnection encapsulates options that configures the connection to the extension.
+type ExtensionConnection struct {
+	// Configures how the gateway handles the case when the extension is not responsive.
+	// Defaults to failClose.
+	//
+	// +optional
+	// +kubebuilder:default="FailClose"
+	FailureMode *ExtensionFailureMode `json:"failureMode"`
+}
+
+// ExtensionFailureMode defines the options for how the gateway handles the case when the extension is not
+// responsive.
+// +kubebuilder:validation:Enum=FailOpen;FailClose
+type ExtensionFailureMode string
+
+const (
+	// FailOpen specifies that the proxy should not drop the request and forward the request to and endpoint of its picking.
+	FailOpen ExtensionFailureMode = "FailOpen"
+	// FailClose specifies that the proxy should drop the request.
+	FailClose ExtensionFailureMode = "FailClose"
+)
 
 // LabelKey was originally copied from: https://github.com/kubernetes-sigs/gateway-api/blob/99a3934c6bc1ce0874f3a4c5f20cafd8977ffcb4/apis/v1/shared_types.go#L694-L731
 // Duplicated as to not take an unexpected dependency on gw's API.
@@ -125,7 +207,7 @@ type InferencePoolConditionType string
 type InferencePoolConditionReason string
 
 const (
-	// This condition indicates if the pool is ready to accept traffic, and if not, why.
+	// PoolConditionReady indicates if the pool is ready to accept traffic, and if not, why.
 	//
 	// Possible reasons for this condition to be True are:
 	//
@@ -141,13 +223,13 @@ const (
 	//
 	PoolConditionReady InferencePoolConditionType = "Ready"
 
-	// Desired state. The pool and its components are initialized and ready for traffic.
+	// PoolReasonReady is the desired state. The pool and its components are initialized and ready for traffic.
 	PoolReasonReady InferencePoolConditionReason = "Ready"
 
-	// This reason is used when the EPP has not yet passed health checks, or has started failing them.
+	// PoolReasonEPPNotHealthy is used when the EPP has not yet passed health checks, or has started failing them.
 	PoolReasonEPPNotHealthy InferencePoolConditionReason = "EndpointPickerNotHealthy"
 
-	// This reason is the initial state, and indicates that the controller has not yet reconciled this pool.
+	// PoolReasonPending is the initial state, and indicates that the controller has not yet reconciled this pool.
 	PoolReasonPending InferencePoolConditionReason = "Pending"
 )
 

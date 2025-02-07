@@ -6,14 +6,15 @@ import (
 
 	configPb "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	extProcPb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+	logutil "inference.networking.x-k8s.io/gateway-api-inference-extension/pkg/ext-proc/util/logging"
 	klog "k8s.io/klog/v2"
 )
 
 // HandleResponseHeaders processes response headers from the backend model server.
 func (s *Server) HandleResponseHeaders(reqCtx *RequestContext, req *extProcPb.ProcessingRequest) (*extProcPb.ProcessingResponse, error) {
-	klog.V(3).Info("Processing ResponseHeaders")
+	klog.V(logutil.VERBOSE).Info("Processing ResponseHeaders")
 	h := req.Request.(*extProcPb.ProcessingRequest_ResponseHeaders)
-	klog.V(3).Infof("Headers before: %+v\n", h)
+	klog.V(logutil.VERBOSE).Infof("Headers before: %+v\n", h)
 
 	resp := &extProcPb.ProcessingResponse{
 		Response: &extProcPb.ProcessingResponse_ResponseHeaders{
@@ -65,7 +66,7 @@ func (s *Server) HandleResponseHeaders(reqCtx *RequestContext, req *extProcPb.Pr
     }
 }*/
 func (s *Server) HandleResponseBody(reqCtx *RequestContext, req *extProcPb.ProcessingRequest) (*extProcPb.ProcessingResponse, error) {
-	klog.V(3).Info("Processing HandleResponseBody")
+	klog.V(logutil.VERBOSE).Info("Processing HandleResponseBody")
 	body := req.Request.(*extProcPb.ProcessingRequest_ResponseBody)
 
 	res := Response{}
@@ -73,13 +74,14 @@ func (s *Server) HandleResponseBody(reqCtx *RequestContext, req *extProcPb.Proce
 		return nil, fmt.Errorf("unmarshaling response body: %v", err)
 	}
 	reqCtx.Response = res
+	reqCtx.ResponseSize = len(body.ResponseBody.Body)
 	// ResponseComplete is to indicate the response is complete. In non-streaming
 	// case, it will be set to be true once the response is processed; in
 	// streaming case, it will be set to be true once the last chunk is processed.
 	// TODO(https://github.com/kubernetes-sigs/gateway-api-inference-extension/issues/178)
 	// will add the processing for streaming case.
 	reqCtx.ResponseComplete = true
-	klog.V(3).Infof("Response: %+v", res)
+	klog.V(logutil.VERBOSE).Infof("Response: %+v", res)
 
 	resp := &extProcPb.ProcessingResponse{
 		Response: &extProcPb.ProcessingResponse_ResponseBody{
