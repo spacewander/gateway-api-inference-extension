@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"inference.networking.x-k8s.io/gateway-api-inference-extension/pkg/ext-proc/metrics"
 	logutil "inference.networking.x-k8s.io/gateway-api-inference-extension/pkg/ext-proc/util/logging"
 	klog "k8s.io/klog/v2"
 )
@@ -96,12 +97,20 @@ func (p *Provider) GetPodMetrics(pod Pod) (*PodMetrics, bool) {
 	return nil, false
 }
 
-func (p *Provider) Init(refreshPodsInterval, refreshMetricsInterval, refreshMetricsTimeout time.Duration) error {
+func (p *Provider) Init(refreshPodsInterval, refreshMetricsInterval, refreshMetricsTimeout, refreshPrometheusMetricsInterval time.Duration) error {
 	// periodically refresh pods
 	go func() {
 		for {
 			p.refreshPodsOnce(refreshMetricsInterval, refreshMetricsTimeout)
 			time.Sleep(refreshPodsInterval)
+		}
+	}()
+
+	// Periodically flush prometheus metrics for inference pool
+	go func() {
+		for {
+			time.Sleep(refreshPrometheusMetricsInterval)
+			p.flushPrometheusMetricsOnce()
 		}
 	}()
 
@@ -159,4 +168,31 @@ func (p *Provider) refreshPodsOnce(refreshMetricsInterval, refreshMetricsTimeout
 	}
 	p.podMetrics.Range(mergeFn)
 	p.datastore.pods.Range(addNewPods)
+}
+
+func (p *Provider) flushPrometheusMetricsOnce() {
+	klog.V(logutil.DEBUG).Infof("Flushing Prometheus Metrics")
+
+	pool, _ := p.datastore.getInferencePool()
+	if pool == nil {
+		// No inference pool or not initialize.
+		return
+	}
+
+	var kvCacheTotal float64
+	var queueTotal int
+
+	podMetrics := append(p.AllFreshPodMetrics(), p.AllStalePodMetrics()...)
+	if len(podMetrics) == 0 {
+		return
+	}
+
+	for _, pod := range podMetrics {
+		kvCacheTotal += pod.KVCacheUsagePercent
+		queueTotal += pod.WaitingQueueSize
+	}
+
+	podTotalCount := len(podMetrics)
+	metrics.RecordInferencePoolAvgKVCache(pool.Name, kvCacheTotal/float64(podTotalCount))
+	metrics.RecordInferencePoolAvgQueueSize(pool.Name, float64(queueTotal/podTotalCount))
 }

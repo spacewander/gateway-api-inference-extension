@@ -19,44 +19,48 @@ import (
 
 // ExtProcServerRunner provides methods to manage an external process server.
 type ExtProcServerRunner struct {
-	GrpcPort               int
-	TargetEndpointKey      string
-	PoolName               string
-	PoolNamespace          string
-	ServiceName            string
-	Zone                   string
-	RefreshPodsInterval    time.Duration
-	RefreshMetricsInterval time.Duration
-	RefreshMetricsTimeout  time.Duration
-	Scheme                 *runtime.Scheme
-	Config                 *rest.Config
-	Datastore              *backend.K8sDatastore
-	manager                ctrl.Manager
+	GrpcPort                         int
+	TargetEndpointKey                string
+	PoolName                         string
+	PoolNamespace                    string
+	ServiceName                      string
+	Zone                             string
+	RefreshPodsInterval              time.Duration
+	RefreshMetricsInterval           time.Duration
+	RefreshMetricsTimeout            time.Duration
+	RefreshPrometheusMetricsInterval time.Duration
+	Scheme                           *runtime.Scheme
+	Config                           *rest.Config
+	Datastore                        *backend.K8sDatastore
+	manager                          ctrl.Manager
 }
 
 // Default values for CLI flags in main
 const (
-	DefaultGrpcPort               = 9002                             // default for --grpcPort
-	DefaultTargetEndpointKey      = "x-gateway-destination-endpoint" // default for --targetEndpointKey
-	DefaultPoolName               = ""                               // required but no default
-	DefaultPoolNamespace          = "default"                        // default for --poolNamespace
-	DefaultServiceName            = ""                               // required but no default
-	DefaultZone                   = ""                               // default for --zone
-	DefaultRefreshPodsInterval    = 10 * time.Second                 // default for --refreshPodsInterval
-	DefaultRefreshMetricsInterval = 50 * time.Millisecond            // default for --refreshMetricsInterval
-	DefaultRefreshMetricsTimeout  = 1 * time.Second                  // default for --refreshMetricsTimeout
+	DefaultGrpcPort                         = 9002                             // default for --grpcPort
+	DefaultTargetEndpointKey                = "x-gateway-destination-endpoint" // default for --targetEndpointKey
+	DefaultPoolName                         = ""                               // required but no default
+	DefaultPoolNamespace                    = "default"                        // default for --poolNamespace
+	DefaultServiceName                      = ""                               // required but no default
+	DefaultZone                             = ""                               // default for --zone
+	DefaultRefreshPodsInterval              = 10 * time.Second                 // default for --refreshPodsInterval
+	DefaultRefreshMetricsInterval           = 50 * time.Millisecond            // default for --refreshMetricsInterval
+	DefaultRefreshMetricsTimeout            = 1 * time.Second                  // default for --refreshMetricsTimeout
+	DefaultRefreshPrometheusMetricsInterval = 5 * time.Second                  // default for --refreshPrometheusMetricsInterval
 )
 
 func NewDefaultExtProcServerRunner() *ExtProcServerRunner {
 	return &ExtProcServerRunner{
-		GrpcPort:               DefaultGrpcPort,
-		TargetEndpointKey:      DefaultTargetEndpointKey,
-		PoolName:               DefaultPoolName,
-		PoolNamespace:          DefaultPoolNamespace,
-		ServiceName:            DefaultServiceName,
-		Zone:                   DefaultZone,
-		RefreshPodsInterval:    DefaultRefreshPodsInterval,
-		RefreshMetricsInterval: DefaultRefreshMetricsInterval,
+		GrpcPort:                         DefaultGrpcPort,
+		TargetEndpointKey:                DefaultTargetEndpointKey,
+		PoolName:                         DefaultPoolName,
+		PoolNamespace:                    DefaultPoolNamespace,
+		ServiceName:                      DefaultServiceName,
+		Zone:                             DefaultZone,
+		RefreshPodsInterval:              DefaultRefreshPodsInterval,
+		RefreshMetricsInterval:           DefaultRefreshMetricsInterval,
+		RefreshMetricsTimeout:            DefaultRefreshMetricsTimeout,
+		RefreshPrometheusMetricsInterval: DefaultRefreshPrometheusMetricsInterval,
 		// Scheme, Config, and Datastore can be assigned later.
 	}
 }
@@ -125,7 +129,7 @@ func (r *ExtProcServerRunner) Start(
 
 		// Initialize backend provider
 		pp := backend.NewProvider(podMetricsClient, podDatastore)
-		if err := pp.Init(r.RefreshPodsInterval, r.RefreshMetricsInterval, r.RefreshMetricsTimeout); err != nil {
+		if err := pp.Init(r.RefreshPodsInterval, r.RefreshMetricsInterval, r.RefreshMetricsTimeout, r.RefreshPrometheusMetricsInterval); err != nil {
 			klog.Fatalf("Failed to initialize backend provider: %v", err)
 		}
 
