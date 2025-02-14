@@ -111,7 +111,6 @@ type PodMetricsProvider interface {
 
 // Schedule finds the target pod based on metrics and the requested lora adapter.
 func (s *Scheduler) Schedule(req *LLMRequest) (targetPod backend.Pod, err error) {
-	klog.V(logutil.VERBOSE).Infof("request: %v; metrics: %+v", req, s.podMetricsProvider.AllFreshPodMetrics())
 	pods, err := s.filter.Filter(req, s.podMetricsProvider.AllFreshPodMetrics())
 	if err != nil || len(pods) == 0 {
 		return backend.Pod{}, fmt.Errorf(

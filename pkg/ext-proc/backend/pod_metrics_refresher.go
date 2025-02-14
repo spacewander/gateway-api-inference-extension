@@ -5,6 +5,7 @@ import (
 	"time"
 
 	klog "k8s.io/klog/v2"
+	logutil "sigs.k8s.io/gateway-api-inference-extension/pkg/ext-proc/util/logging"
 )
 
 type PodMetricsRefresher struct {
@@ -29,7 +30,7 @@ func NewPodMetricsRefresher(provider *Provider, pod Pod, interval, timeout time.
 
 func (r *PodMetricsRefresher) start() {
 	go func() {
-		klog.V(2).Infof("Starting refresher for pod %v", r.pod)
+		klog.V(logutil.DEFAULT).InfoS("Starting refresher", "pod", r.pod)
 		for {
 			select {
 			case <-r.done:
@@ -39,7 +40,7 @@ func (r *PodMetricsRefresher) start() {
 
 			err := r.refreshMetrics()
 			if err != nil {
-				klog.Errorf("Failed to refresh metrics for pod %s: %v", r.pod, err)
+				klog.ErrorS(err, "Failed to refresh metrics", "pod", r.pod)
 			}
 
 			time.Sleep(r.interval)
@@ -60,7 +61,7 @@ func (r *PodMetricsRefresher) refreshMetrics() error {
 		return nil
 	}
 
-	klog.V(4).Infof("Processing pod %v and metric %v", pod, existing.Metrics)
+	klog.V(logutil.DEBUG).InfoS("Refresh metrics", "pod", pod, "metrics", existing.Metrics)
 	updated, err := r.provider.pmc.FetchMetrics(ctx, r.pod, existing)
 	if err != nil {
 		return err
@@ -71,6 +72,6 @@ func (r *PodMetricsRefresher) refreshMetrics() error {
 }
 
 func (r *PodMetricsRefresher) stop() {
-	klog.V(2).Infof("Stopping refresher for pod %v", r.pod)
+	klog.V(logutil.DEFAULT).InfoS("Stopping refresher", "pod", r.pod)
 	close(r.done)
 }

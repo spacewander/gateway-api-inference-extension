@@ -11,9 +11,7 @@ import (
 )
 
 const (
-	// TODO: make it configurable. One idea is to provide a configuration singleton
-	// and put fields like refreshMetricsInterval in it. So far, we have to pass these
-	// fields across several layers.
+	// TODO: https://github.com/kubernetes-sigs/gateway-api-inference-extension/issues/336
 	metricsValidityPeriod = 5 * time.Second
 )
 
@@ -64,7 +62,7 @@ func (p *Provider) allPodMetrics(stale bool) []*PodMetrics {
 		if !stale {
 			if isPodMetricsStale(m) {
 				// exclude stale metrics for scheduler
-				klog.V(4).Infof("Pod metrics for %s is stale, skipping", m.Pod)
+				klog.V(logutil.DEBUG).InfoS("Pod metrics is stale, skipping", "pod", m.Pod)
 			} else {
 				res = append(res, m)
 			}
@@ -84,7 +82,7 @@ func (p *Provider) allPodMetrics(stale bool) []*PodMetrics {
 func (p *Provider) UpdatePodMetrics(pod Pod, pm *PodMetrics) {
 	pm.Metrics.UpdatedTime = time.Now()
 	p.podMetrics.Store(pod, pm)
-	klog.V(4).Infof("Updated metrics for pod %s: %v", pod, pm.Metrics)
+	klog.V(logutil.DEBUG).InfoS("Updated metrics", "pod", pod, "metrics", pm.Metrics)
 }
 
 func (p *Provider) GetPodMetrics(pod Pod) (*PodMetrics, bool) {
@@ -156,7 +154,7 @@ func (p *Provider) refreshPodsOnce(refreshMetricsInterval, refreshMetricsTimeout
 		pod := k.(Pod)
 		if _, ok := p.datastore.pods.Load(pod); !ok {
 			p.podMetrics.Delete(pod)
-			if v, ok := p.podMetrics.LoadAndDelete(pod); ok {
+			if v, ok := p.podMetricsRefresher.LoadAndDelete(pod); ok {
 				refresher := v.(*PodMetricsRefresher)
 				refresher.stop()
 			}
