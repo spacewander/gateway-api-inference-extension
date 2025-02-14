@@ -2,14 +2,16 @@ package backend
 
 import (
 	"context"
+	"reflect"
 
-	"inference.networking.x-k8s.io/gateway-api-inference-extension/api/v1alpha1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	klog "k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/gateway-api-inference-extension/api/v1alpha1"
+	logutil "sigs.k8s.io/gateway-api-inference-extension/pkg/ext-proc/util/logging"
 )
 
 // InferencePoolReconciler utilizes the controller runtime to reconcile Instance Gateway resources
@@ -21,22 +23,26 @@ type InferencePoolReconciler struct {
 	Record             record.EventRecorder
 	PoolNamespacedName types.NamespacedName
 	Datastore          *K8sDatastore
-	Zone               string
 }
 
 func (c *InferencePoolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	if req.NamespacedName.Name != c.PoolNamespacedName.Name || req.NamespacedName.Namespace != c.PoolNamespacedName.Namespace {
 		return ctrl.Result{}, nil
 	}
-	klog.V(1).Info("reconciling InferencePool", req.NamespacedName)
+	klogV := klog.V(logutil.DEFAULT)
+	klogV.InfoS("Reconciling InferencePool", "name", req.NamespacedName)
 
 	serverPool := &v1alpha1.InferencePool{}
 	if err := c.Get(ctx, req.NamespacedName, serverPool); err != nil {
-		klog.Error(err, "unable to get InferencePool")
+		klogV.ErrorS(err, "Unable to get InferencePool", "name", req.NamespacedName)
 		return ctrl.Result{}, err
 	}
-
-	c.updateDatastore(serverPool)
+	if c.Datastore.inferencePool == nil || !reflect.DeepEqual(serverPool.Spec.Selector, c.Datastore.inferencePool.Spec.Selector) {
+		c.updateDatastore(serverPool)
+		c.Datastore.flushPodsAndRefetch(ctx, c.Client, serverPool)
+	} else {
+		c.updateDatastore(serverPool)
+	}
 
 	return ctrl.Result{}, nil
 }
@@ -45,7 +51,7 @@ func (c *InferencePoolReconciler) updateDatastore(serverPool *v1alpha1.Inference
 	pool, _ := c.Datastore.getInferencePool()
 	if pool == nil ||
 		serverPool.ObjectMeta.ResourceVersion != pool.ObjectMeta.ResourceVersion {
-		klog.Infof("Updating inference pool to %v/%v", serverPool.ObjectMeta.Namespace, serverPool.ObjectMeta.Name)
+		klog.V(logutil.DEFAULT).InfoS("Updating inference pool", "target", klog.KMetadata(&serverPool.ObjectMeta))
 		c.Datastore.setInferencePool(serverPool)
 	}
 }

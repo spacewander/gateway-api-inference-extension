@@ -1,20 +1,20 @@
 package server
 
 import (
+	"context"
 	"fmt"
-	"net"
 	"time"
 
 	extProcPb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"google.golang.org/grpc"
-	"inference.networking.x-k8s.io/gateway-api-inference-extension/pkg/ext-proc/backend"
-	"inference.networking.x-k8s.io/gateway-api-inference-extension/pkg/ext-proc/handlers"
-	"inference.networking.x-k8s.io/gateway-api-inference-extension/pkg/ext-proc/scheduling"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/rest"
 	klog "k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
+	"sigs.k8s.io/gateway-api-inference-extension/pkg/ext-proc/backend"
+	"sigs.k8s.io/gateway-api-inference-extension/pkg/ext-proc/handlers"
+	"sigs.k8s.io/gateway-api-inference-extension/pkg/ext-proc/internal/runnable"
+	"sigs.k8s.io/gateway-api-inference-extension/pkg/ext-proc/scheduling"
 )
 
 // ExtProcServerRunner provides methods to manage an external process server.
@@ -23,16 +23,11 @@ type ExtProcServerRunner struct {
 	TargetEndpointKey                string
 	PoolName                         string
 	PoolNamespace                    string
-	ServiceName                      string
-	Zone                             string
 	RefreshPodsInterval              time.Duration
 	RefreshMetricsInterval           time.Duration
 	RefreshMetricsTimeout            time.Duration
 	RefreshPrometheusMetricsInterval time.Duration
-	Scheme                           *runtime.Scheme
-	Config                           *rest.Config
 	Datastore                        *backend.K8sDatastore
-	manager                          ctrl.Manager
 }
 
 // Default values for CLI flags in main
@@ -41,8 +36,6 @@ const (
 	DefaultTargetEndpointKey                = "x-gateway-destination-endpoint" // default for --targetEndpointKey
 	DefaultPoolName                         = ""                               // required but no default
 	DefaultPoolNamespace                    = "default"                        // default for --poolNamespace
-	DefaultServiceName                      = ""                               // required but no default
-	DefaultZone                             = ""                               // default for --zone
 	DefaultRefreshPodsInterval              = 10 * time.Second                 // default for --refreshPodsInterval
 	DefaultRefreshMetricsInterval           = 50 * time.Millisecond            // default for --refreshMetricsInterval
 	DefaultRefreshMetricsTimeout            = 1 * time.Second                  // default for --refreshMetricsTimeout
@@ -55,25 +48,16 @@ func NewDefaultExtProcServerRunner() *ExtProcServerRunner {
 		TargetEndpointKey:                DefaultTargetEndpointKey,
 		PoolName:                         DefaultPoolName,
 		PoolNamespace:                    DefaultPoolNamespace,
-		ServiceName:                      DefaultServiceName,
-		Zone:                             DefaultZone,
 		RefreshPodsInterval:              DefaultRefreshPodsInterval,
 		RefreshMetricsInterval:           DefaultRefreshMetricsInterval,
 		RefreshMetricsTimeout:            DefaultRefreshMetricsTimeout,
 		RefreshPrometheusMetricsInterval: DefaultRefreshPrometheusMetricsInterval,
-		// Scheme, Config, and Datastore can be assigned later.
+		// Datastore can be assigned later.
 	}
 }
 
-// Setup creates the reconcilers for pools, models, and endpointSlices and starts the manager.
-func (r *ExtProcServerRunner) Setup() {
-	// Create a new manager to manage controllers
-	mgr, err := ctrl.NewManager(r.Config, ctrl.Options{Scheme: r.Scheme})
-	if err != nil {
-		klog.Fatalf("Failed to create controller manager: %v", err)
-	}
-	r.manager = mgr
-
+// SetupWithManager sets up the runner with the given manager.
+func (r *ExtProcServerRunner) SetupWithManager(mgr ctrl.Manager) error {
 	// Create the controllers and register them with the manager
 	if err := (&backend.InferencePoolReconciler{
 		Datastore: r.Datastore,
@@ -85,7 +69,7 @@ func (r *ExtProcServerRunner) Setup() {
 		},
 		Record: mgr.GetEventRecorderFor("InferencePool"),
 	}).SetupWithManager(mgr); err != nil {
-		klog.Fatalf("Failed setting up InferencePoolReconciler: %v", err)
+		return fmt.Errorf("failed setting up InferencePoolReconciler: %w", err)
 	}
 
 	if err := (&backend.InferenceModelReconciler{
@@ -98,65 +82,42 @@ func (r *ExtProcServerRunner) Setup() {
 		},
 		Record: mgr.GetEventRecorderFor("InferenceModel"),
 	}).SetupWithManager(mgr); err != nil {
-		klog.Fatalf("Failed setting up InferenceModelReconciler: %v", err)
+		return fmt.Errorf("failed setting up InferenceModelReconciler: %w", err)
 	}
 
-	if err := (&backend.EndpointSliceReconciler{
-		Datastore:   r.Datastore,
-		Scheme:      mgr.GetScheme(),
-		Client:      mgr.GetClient(),
-		Record:      mgr.GetEventRecorderFor("endpointslice"),
-		ServiceName: r.ServiceName,
-		Zone:        r.Zone,
+	if err := (&backend.PodReconciler{
+		Datastore: r.Datastore,
+		Scheme:    mgr.GetScheme(),
+		Client:    mgr.GetClient(),
+		Record:    mgr.GetEventRecorderFor("pod"),
 	}).SetupWithManager(mgr); err != nil {
-		klog.Fatalf("Failed setting up EndpointSliceReconciler: %v", err)
+		return fmt.Errorf("failed setting up EndpointSliceReconciler: %v", err)
 	}
+	return nil
 }
 
-// Start starts the Envoy external processor server in a goroutine.
-func (r *ExtProcServerRunner) Start(
+// AsRunnable returns a Runnable that can be used to start the ext-proc gRPC server.
+// The runnable implements LeaderElectionRunnable with leader election disabled.
+func (r *ExtProcServerRunner) AsRunnable(
 	podDatastore *backend.K8sDatastore,
 	podMetricsClient backend.PodMetricsClient,
-) *grpc.Server {
-	svr := grpc.NewServer()
-
-	go func() {
-		lis, err := net.Listen("tcp", fmt.Sprintf(":%d", r.GrpcPort))
-		if err != nil {
-			klog.Fatalf("Ext-proc server failed to listen: %v", err)
-		}
-		klog.Infof("Ext-proc server listening on port: %d", r.GrpcPort)
-
+) manager.Runnable {
+	return runnable.NoLeaderElection(manager.RunnableFunc(func(ctx context.Context) error {
 		// Initialize backend provider
 		pp := backend.NewProvider(podMetricsClient, podDatastore)
 		if err := pp.Init(r.RefreshPodsInterval, r.RefreshMetricsInterval, r.RefreshMetricsTimeout, r.RefreshPrometheusMetricsInterval); err != nil {
-			klog.Fatalf("Failed to initialize backend provider: %v", err)
+			klog.ErrorS(err, "Failed to initialize backend provider")
+			return err
 		}
 
-		// Register ext_proc handlers
+		// Init the server.
+		srv := grpc.NewServer()
 		extProcPb.RegisterExternalProcessorServer(
-			svr,
+			srv,
 			handlers.NewServer(pp, scheduling.NewScheduler(pp), r.TargetEndpointKey, r.Datastore),
 		)
 
-		// Blocking and will return when shutdown is complete.
-		if err := svr.Serve(lis); err != nil && err != grpc.ErrServerStopped {
-			klog.Fatalf("Ext-proc server failed: %v", err)
-		}
-		klog.Info("Ext-proc server shutting down")
-	}()
-	return svr
-}
-
-func (r *ExtProcServerRunner) StartManager() {
-	if r.manager == nil {
-		klog.Fatalf("Runner has no manager setup to run: %v", r)
-	}
-	// Start the controller manager. Blocking and will return when shutdown is complete.
-	klog.Infof("Starting controller manager")
-	mgr := r.manager
-	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
-		klog.Fatalf("Error starting controller manager: %v", err)
-	}
-	klog.Info("Controller manager shutting down")
+		// Forward to the gRPC runnable.
+		return runnable.GRPCServer("ext-proc", srv, r.GrpcPort).Start(ctx)
+	}))
 }

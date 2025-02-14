@@ -7,9 +7,9 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"inference.networking.x-k8s.io/gateway-api-inference-extension/pkg/ext-proc/backend"
-	logutil "inference.networking.x-k8s.io/gateway-api-inference-extension/pkg/ext-proc/util/logging"
 	klog "k8s.io/klog/v2"
+	"sigs.k8s.io/gateway-api-inference-extension/pkg/ext-proc/backend"
+	logutil "sigs.k8s.io/gateway-api-inference-extension/pkg/ext-proc/util/logging"
 )
 
 const (
@@ -83,7 +83,7 @@ var (
 		nextOnFailure: &filter{
 			name: "drop request",
 			filter: func(req *LLMRequest, pods []*backend.PodMetrics) ([]*backend.PodMetrics, error) {
-				klog.Infof("Dropping request %v", req)
+				klog.V(logutil.DEFAULT).InfoS("Request dropped", "request", req)
 				return []*backend.PodMetrics{}, status.Errorf(
 					codes.ResourceExhausted, "dropping request due to limited backend resources")
 			},
@@ -92,7 +92,6 @@ var (
 )
 
 func NewScheduler(pmp PodMetricsProvider) *Scheduler {
-
 	return &Scheduler{
 		podMetricsProvider: pmp,
 		filter:             defaultFilter,
@@ -118,7 +117,7 @@ func (s *Scheduler) Schedule(req *LLMRequest) (targetPod backend.Pod, err error)
 		return backend.Pod{}, fmt.Errorf(
 			"failed to apply filter, resulted %v pods, this should never happen: %w", len(pods), err)
 	}
-	klog.V(logutil.VERBOSE).Infof("Going to randomly select a pod from the candidates: %+v", pods)
+	klog.V(logutil.VERBOSE).InfoS("Selecting a random pod from the candidates", "candidatePods", pods)
 	i := rand.Intn(len(pods))
 	return pods[i].Pod, nil
 }

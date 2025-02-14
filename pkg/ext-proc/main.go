@@ -1,21 +1,18 @@
 package main
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	uberzap "go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc"
 	healthPb "google.golang.org/grpc/health/grpc_health_v1"
-	"inference.networking.x-k8s.io/gateway-api-inference-extension/api/v1alpha1"
-	"inference.networking.x-k8s.io/gateway-api-inference-extension/pkg/ext-proc/backend"
-	"inference.networking.x-k8s.io/gateway-api-inference-extension/pkg/ext-proc/backend/vllm"
-	"inference.networking.x-k8s.io/gateway-api-inference-extension/pkg/ext-proc/metrics"
-	runserver "inference.networking.x-k8s.io/gateway-api-inference-extension/pkg/ext-proc/server"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -23,7 +20,16 @@ import (
 	"k8s.io/component-base/metrics/legacyregistry"
 	klog "k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
+	"sigs.k8s.io/gateway-api-inference-extension/api/v1alpha1"
+	"sigs.k8s.io/gateway-api-inference-extension/pkg/ext-proc/backend"
+	"sigs.k8s.io/gateway-api-inference-extension/pkg/ext-proc/backend/vllm"
+	"sigs.k8s.io/gateway-api-inference-extension/pkg/ext-proc/internal/runnable"
+	"sigs.k8s.io/gateway-api-inference-extension/pkg/ext-proc/metrics"
+	runserver "sigs.k8s.io/gateway-api-inference-extension/pkg/ext-proc/server"
+	"sigs.k8s.io/gateway-api-inference-extension/pkg/ext-proc/util/logging"
 )
 
 const (
@@ -53,14 +59,6 @@ var (
 		"poolNamespace",
 		runserver.DefaultPoolNamespace,
 		"Namespace of the InferencePool this Endpoint Picker is associated with.")
-	serviceName = flag.String(
-		"serviceName",
-		runserver.DefaultServiceName,
-		"Name of the Service that will be used to read EndpointSlices from")
-	zone = flag.String(
-		"zone",
-		runserver.DefaultZone,
-		"The zone that this instance is created in. Will be passed to the corresponding endpointSlice. ")
 	refreshPodsInterval = flag.Duration(
 		"refreshPodsInterval",
 		runserver.DefaultRefreshPodsInterval,
@@ -77,6 +75,7 @@ var (
 		"refreshPrometheusMetricsInterval",
 		runserver.DefaultRefreshPrometheusMetricsInterval,
 		"interval to flush prometheus metrics")
+	logVerbosity = flag.Int("v", logging.DEFAULT, "number for the log level verbosity")
 
 	scheme = runtime.NewScheme()
 )
@@ -87,147 +86,177 @@ func init() {
 }
 
 func main() {
-	klog.InitFlags(nil)
-	flag.Parse()
-
-	ctrl.SetLogger(klog.TODO())
-	cfg, err := ctrl.GetConfig()
-	if err != nil {
-		klog.Fatalf("Failed to get rest config: %v", err)
+	if err := run(); err != nil {
+		os.Exit(1)
 	}
+}
+
+func run() error {
+	opts := zap.Options{
+		Development: true,
+	}
+	opts.BindFlags(flag.CommandLine)
+	flag.Parse()
+	initLogging(&opts)
+
 	// Validate flags
 	if err := validateFlags(); err != nil {
-		klog.Fatalf("Failed to validate flags: %v", err)
+		klog.ErrorS(err, "Failed to validate flags")
+		return err
 	}
 
 	// Print all flag values
-	flags := "Flags: "
+	flags := make(map[string]any)
 	flag.VisitAll(func(f *flag.Flag) {
-		flags += fmt.Sprintf("%s=%v; ", f.Name, f.Value)
+		flags[f.Name] = f.Value
 	})
-	klog.Info(flags)
+	klog.InfoS("Flags processed", "flags", flags)
 
 	datastore := backend.NewK8sDataStore()
 
+	// Init runtime.
+	cfg, err := ctrl.GetConfig()
+	if err != nil {
+		klog.ErrorS(err, "Failed to get rest config")
+		return err
+	}
+
+	mgr, err := ctrl.NewManager(cfg, ctrl.Options{Scheme: scheme})
+	if err != nil {
+		klog.ErrorS(err, "Failed to create controller manager", "config", cfg)
+		return err
+	}
+
+	// Setup runner.
 	serverRunner := &runserver.ExtProcServerRunner{
 		GrpcPort:                         *grpcPort,
 		TargetEndpointKey:                *targetEndpointKey,
 		PoolName:                         *poolName,
 		PoolNamespace:                    *poolNamespace,
-		ServiceName:                      *serviceName,
-		Zone:                             *zone,
 		RefreshPodsInterval:              *refreshPodsInterval,
 		RefreshMetricsInterval:           *refreshMetricsInterval,
 		RefreshMetricsTimeout:            *refreshMetricsTimeout,
 		RefreshPrometheusMetricsInterval: *refreshPrometheusMetricsInterval,
-		Scheme:                           scheme,
-		Config:                           ctrl.GetConfigOrDie(),
 		Datastore:                        datastore,
 	}
-	serverRunner.Setup()
-
-	// Start health and ext-proc servers in goroutines
-	healthSvr := startHealthServer(datastore, *grpcHealthPort)
-	extProcSvr := serverRunner.Start(
-		datastore,
-		&vllm.PodMetricsClientImpl{},
-	)
-	// Start metrics handler
-	metricsSvr := startMetricsHandler(*metricsPort, cfg)
-
-	// Start manager, blocking
-	serverRunner.StartManager()
-
-	// Gracefully shutdown servers
-	if healthSvr != nil {
-		klog.Info("Health server shutting down")
-		healthSvr.GracefulStop()
-	}
-	if extProcSvr != nil {
-		klog.Info("Ext-proc server shutting down")
-		extProcSvr.GracefulStop()
-	}
-	if metricsSvr != nil {
-		klog.Info("Metrics server shutting down")
-		if err := metricsSvr.Shutdown(context.Background()); err != nil {
-			klog.Infof("Metrics server Shutdown: %v", err)
-		}
+	if err := serverRunner.SetupWithManager(mgr); err != nil {
+		klog.ErrorS(err, "Failed to setup ext-proc server")
+		return err
 	}
 
-	klog.Info("All components shutdown")
+	// Register health server.
+	if err := registerHealthServer(mgr, datastore, *grpcHealthPort); err != nil {
+		return err
+	}
+
+	// Register ext-proc server.
+	if err := mgr.Add(serverRunner.AsRunnable(datastore, &vllm.PodMetricsClientImpl{})); err != nil {
+		klog.ErrorS(err, "Failed to register ext-proc server")
+		return err
+	}
+
+	// Register metrics handler.
+	if err := registerMetricsHandler(mgr, *metricsPort, cfg); err != nil {
+		return err
+	}
+
+	// Start the manager. This blocks until a signal is received.
+	klog.InfoS("Controller manager starting")
+	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
+		klog.ErrorS(err, "Error starting controller manager")
+		return err
+	}
+	klog.InfoS("Controller manager terminated")
+	return nil
 }
 
-// startHealthServer starts the gRPC health probe server in a goroutine.
-func startHealthServer(ds *backend.K8sDatastore, port int) *grpc.Server {
-	svr := grpc.NewServer()
-	healthPb.RegisterHealthServer(svr, &healthServer{datastore: ds})
-
-	go func() {
-		lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
-		if err != nil {
-			klog.Fatalf("Health server failed to listen: %v", err)
+func initLogging(opts *zap.Options) {
+	// Unless -zap-log-level is explicitly set, use -v
+	useV := true
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "zap-log-level" {
+			useV = false
 		}
-		klog.Infof("Health server listening on port: %d", port)
+	})
+	if useV {
+		// See https://pkg.go.dev/sigs.k8s.io/controller-runtime/pkg/log/zap#Options.Level
+		lvl := -1 * (*logVerbosity)
+		opts.Level = uberzap.NewAtomicLevelAt(zapcore.Level(int8(lvl)))
+	}
 
-		// Blocking and will return when shutdown is complete.
-		if err := svr.Serve(lis); err != nil && err != grpc.ErrServerStopped {
-			klog.Fatalf("Health server failed: %v", err)
-		}
-		klog.Info("Health server shutting down")
-	}()
-	return svr
+	logger := zap.New(zap.UseFlagOptions(opts), zap.RawZapOpts(uberzap.AddCaller()))
+	ctrl.SetLogger(logger)
+	klog.SetLogger(logger)
 }
 
-func startMetricsHandler(port int, cfg *rest.Config) *http.Server {
+// registerHealthServer adds the Health gRPC server as a Runnable to the given manager.
+func registerHealthServer(mgr manager.Manager, ds *backend.K8sDatastore, port int) error {
+	srv := grpc.NewServer()
+	healthPb.RegisterHealthServer(srv, &healthServer{datastore: ds})
+	if err := mgr.Add(
+		runnable.NoLeaderElection(runnable.GRPCServer("health", srv, port))); err != nil {
+		klog.ErrorS(err, "Failed to register health server")
+		return err
+	}
+	return nil
+}
+
+// registerMetricsHandler adds the metrics HTTP handler as a Runnable to the given manager.
+func registerMetricsHandler(mgr manager.Manager, port int, cfg *rest.Config) error {
 	metrics.Register()
 
-	var svr *http.Server
-	go func() {
-		klog.Info("Starting metrics HTTP handler ...")
+	// Init HTTP server.
+	h, err := metricsHandlerWithAuthenticationAndAuthorization(cfg)
+	if err != nil {
+		return err
+	}
 
-		mux := http.NewServeMux()
-		mux.Handle(defaultMetricsEndpoint, metricsHandlerWithAuthenticationAndAuthorization(cfg))
+	mux := http.NewServeMux()
+	mux.Handle(defaultMetricsEndpoint, h)
 
-		svr = &http.Server{
-			Addr:    net.JoinHostPort("", strconv.Itoa(port)),
-			Handler: mux,
-		}
-		if err := svr.ListenAndServe(); err != http.ErrServerClosed {
-			klog.Fatalf("failed to start metrics HTTP handler: %v", err)
-		}
-	}()
-	return svr
+	srv := &http.Server{
+		Addr:    net.JoinHostPort("", strconv.Itoa(port)),
+		Handler: mux,
+	}
+
+	if err := mgr.Add(&manager.Server{
+		Name:   "metrics",
+		Server: srv,
+	}); err != nil {
+		klog.ErrorS(err, "Failed to register metrics HTTP handler")
+		return err
+	}
+	return nil
 }
 
-func metricsHandlerWithAuthenticationAndAuthorization(cfg *rest.Config) http.Handler {
+func metricsHandlerWithAuthenticationAndAuthorization(cfg *rest.Config) (http.Handler, error) {
 	h := promhttp.HandlerFor(
 		legacyregistry.DefaultGatherer,
 		promhttp.HandlerOpts{},
 	)
 	httpClient, err := rest.HTTPClientFor(cfg)
 	if err != nil {
-		klog.Fatalf("failed to create http client for metrics auth: %v", err)
+		klog.ErrorS(err, "Failed to create http client for metrics auth")
+		return nil, err
 	}
 
 	filter, err := filters.WithAuthenticationAndAuthorization(cfg, httpClient)
 	if err != nil {
-		klog.Fatalf("failed to create metrics filter for auth: %v", err)
+		klog.ErrorS(err, "Failed to create metrics filter for auth")
+		return nil, err
 	}
 	metricsLogger := klog.LoggerWithValues(klog.NewKlogr(), "path", defaultMetricsEndpoint)
 	metricsAuthHandler, err := filter(metricsLogger, h)
 	if err != nil {
-		klog.Fatalf("failed to create metrics auth handler: %v", err)
+		klog.ErrorS(err, "Failed to create metrics auth handler")
+		return nil, err
 	}
-	return metricsAuthHandler
+	return metricsAuthHandler, nil
 }
 
 func validateFlags() error {
 	if *poolName == "" {
 		return fmt.Errorf("required %q flag not set", "poolName")
-	}
-
-	if *serviceName == "" {
-		return fmt.Errorf("required %q flag not set", "serviceName")
 	}
 
 	return nil

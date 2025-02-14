@@ -5,9 +5,9 @@ import (
 	"sync"
 	"time"
 
-	"inference.networking.x-k8s.io/gateway-api-inference-extension/pkg/ext-proc/metrics"
-	logutil "inference.networking.x-k8s.io/gateway-api-inference-extension/pkg/ext-proc/util/logging"
 	klog "k8s.io/klog/v2"
+	"sigs.k8s.io/gateway-api-inference-extension/pkg/ext-proc/metrics"
+	logutil "sigs.k8s.io/gateway-api-inference-extension/pkg/ext-proc/util/logging"
 )
 
 const (
@@ -115,15 +115,12 @@ func (p *Provider) Init(refreshPodsInterval, refreshMetricsInterval, refreshMetr
 	}()
 
 	// Periodically print out the pods and metrics for DEBUGGING.
-	if klog.V(logutil.DEBUG).Enabled() {
+	if klogV := klog.V(logutil.DEBUG); klogV.Enabled() {
 		go func() {
 			for {
 				time.Sleep(5 * time.Second)
-				podMetrics := p.AllFreshPodMetrics()
-				klog.Infof("===DEBUG: Current Pods and metrics: %+v", podMetrics)
-
-				podMetrics = p.AllStalePodMetrics()
-				klog.Infof("===DEBUG: Stale Pods and metrics: %+v", podMetrics)
+				klogV.InfoS("Current Pods and metrics gathered", "fresh metrics", p.AllFreshPodMetrics(),
+					"stale metrics", p.AllStalePodMetrics())
 			}
 		}()
 	}
@@ -171,7 +168,7 @@ func (p *Provider) refreshPodsOnce(refreshMetricsInterval, refreshMetricsTimeout
 }
 
 func (p *Provider) flushPrometheusMetricsOnce() {
-	klog.V(logutil.DEBUG).Infof("Flushing Prometheus Metrics")
+	klog.V(logutil.DEBUG).InfoS("Flushing Prometheus Metrics")
 
 	pool, _ := p.datastore.getInferencePool()
 	if pool == nil {

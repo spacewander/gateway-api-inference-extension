@@ -18,19 +18,19 @@ limitations under the License.
 package fake
 
 import (
-	v1alpha1 "inference.networking.x-k8s.io/gateway-api-inference-extension/api/v1alpha1"
-	apiv1alpha1 "inference.networking.x-k8s.io/gateway-api-inference-extension/client-go/applyconfiguration/api/v1alpha1"
-	typedapiv1alpha1 "inference.networking.x-k8s.io/gateway-api-inference-extension/client-go/clientset/versioned/typed/api/v1alpha1"
 	gentype "k8s.io/client-go/gentype"
+	v1alpha1 "sigs.k8s.io/gateway-api-inference-extension/api/v1alpha1"
+	apiv1alpha1 "sigs.k8s.io/gateway-api-inference-extension/client-go/applyconfiguration/api/v1alpha1"
+	typedapiv1alpha1 "sigs.k8s.io/gateway-api-inference-extension/client-go/clientset/versioned/typed/api/v1alpha1"
 )
 
 // fakeInferenceModels implements InferenceModelInterface
 type fakeInferenceModels struct {
 	*gentype.FakeClientWithListAndApply[*v1alpha1.InferenceModel, *v1alpha1.InferenceModelList, *apiv1alpha1.InferenceModelApplyConfiguration]
-	Fake *FakeApiV1alpha1
+	Fake *FakeInferenceV1alpha1
 }
 
-func newFakeInferenceModels(fake *FakeApiV1alpha1, namespace string) typedapiv1alpha1.InferenceModelInterface {
+func newFakeInferenceModels(fake *FakeInferenceV1alpha1, namespace string) typedapiv1alpha1.InferenceModelInterface {
 	return &fakeInferenceModels{
 		gentype.NewFakeClientWithListAndApply[*v1alpha1.InferenceModel, *v1alpha1.InferenceModelList, *apiv1alpha1.InferenceModelApplyConfiguration](
 			fake.Fake,

@@ -10,11 +10,12 @@ import (
 	"github.com/bojand/ghz/runner"
 	"github.com/jhump/protoreflect/desc"
 	"google.golang.org/protobuf/proto"
-	"inference.networking.x-k8s.io/gateway-api-inference-extension/api/v1alpha1"
-	"inference.networking.x-k8s.io/gateway-api-inference-extension/pkg/ext-proc/backend"
-	runserver "inference.networking.x-k8s.io/gateway-api-inference-extension/pkg/ext-proc/server"
-	"inference.networking.x-k8s.io/gateway-api-inference-extension/pkg/ext-proc/test"
 	klog "k8s.io/klog/v2"
+	"sigs.k8s.io/gateway-api-inference-extension/api/v1alpha1"
+	"sigs.k8s.io/gateway-api-inference-extension/pkg/ext-proc/backend"
+	runserver "sigs.k8s.io/gateway-api-inference-extension/pkg/ext-proc/server"
+	"sigs.k8s.io/gateway-api-inference-extension/pkg/ext-proc/test"
+	logutil "sigs.k8s.io/gateway-api-inference-extension/pkg/ext-proc/util/logging"
 )
 
 var (
@@ -35,13 +36,19 @@ const (
 )
 
 func main() {
+	if err := run(); err != nil {
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	klog.InitFlags(nil)
 	flag.Parse()
 
 	if *localServer {
 		test.StartExtProc(port, *refreshPodsInterval, *refreshMetricsInterval, *refreshMetricsTimeout, *refreshPrometheusMetricsInterval, fakePods(), fakeModels())
 		time.Sleep(time.Second) // wait until server is up
-		klog.Info("Server started")
+		klog.InfoS("Server started")
 	}
 
 	report, err := runner.Run(
@@ -52,7 +59,8 @@ func main() {
 		runner.WithTotalRequests(uint(*totalRequests)),
 	)
 	if err != nil {
-		klog.Fatal(err)
+		klog.ErrorS(err, "Runner failed")
+		return err
 	}
 
 	printer := printer.ReportPrinter{
@@ -61,6 +69,7 @@ func main() {
 	}
 
 	printer.Print("summary")
+	return nil
 }
 
 func generateRequest(mtd *desc.MethodDescriptor, callData *runner.CallData) []byte {
@@ -68,7 +77,7 @@ func generateRequest(mtd *desc.MethodDescriptor, callData *runner.CallData) []by
 	req := test.GenerateRequest(modelName(int(callData.RequestNumber) % numModels))
 	data, err := proto.Marshal(req)
 	if err != nil {
-		klog.Fatal("marshaling error: ", err)
+		logutil.Fatal(err, "Failed to marshal request", "request", req)
 	}
 	return data
 }

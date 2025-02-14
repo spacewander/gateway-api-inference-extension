@@ -3,8 +3,6 @@ package backend
 import (
 	"context"
 
-	"inference.networking.x-k8s.io/gateway-api-inference-extension/api/v1alpha1"
-	logutil "inference.networking.x-k8s.io/gateway-api-inference-extension/pkg/ext-proc/util/logging"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -12,6 +10,8 @@ import (
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/gateway-api-inference-extension/api/v1alpha1"
+	logutil "sigs.k8s.io/gateway-api-inference-extension/pkg/ext-proc/util/logging"
 )
 
 type InferenceModelReconciler struct {
@@ -26,17 +26,23 @@ func (c *InferenceModelReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	if req.Namespace != c.PoolNamespacedName.Namespace {
 		return ctrl.Result{}, nil
 	}
-	klog.V(1).Infof("Reconciling InferenceModel %v", req.NamespacedName)
+
+	klogV := klog.V(logutil.DEFAULT)
+	klogV.InfoS("Reconciling InferenceModel", "name", req.NamespacedName)
 
 	infModel := &v1alpha1.InferenceModel{}
 	if err := c.Get(ctx, req.NamespacedName, infModel); err != nil {
 		if errors.IsNotFound(err) {
-			klog.V(1).Infof("InferenceModel %v not found. Removing from datastore since object must be deleted", req.NamespacedName)
+			klogV.InfoS("InferenceModel not found. Removing from datastore since object must be deleted", "name", req.NamespacedName)
 			c.Datastore.InferenceModels.Delete(infModel.Spec.ModelName)
 			return ctrl.Result{}, nil
 		}
-		klog.Error(err, "Unable to get InferenceModel")
+		klogV.ErrorS(err, "Unable to get InferenceModel", "name", req.NamespacedName)
 		return ctrl.Result{}, err
+	} else if !infModel.DeletionTimestamp.IsZero() {
+		klogV.InfoS("InferenceModel is marked for deletion. Removing from datastore", "name", req.NamespacedName)
+		c.Datastore.InferenceModels.Delete(infModel.Spec.ModelName)
+		return ctrl.Result{}, nil
 	}
 
 	c.updateDatastore(infModel)
@@ -44,13 +50,15 @@ func (c *InferenceModelReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 }
 
 func (c *InferenceModelReconciler) updateDatastore(infModel *v1alpha1.InferenceModel) {
+	klogV := klog.V(logutil.DEFAULT)
+
 	if infModel.Spec.PoolRef.Name == c.PoolNamespacedName.Name {
-		klog.V(1).Infof("Incoming pool ref %v, server pool name: %v", infModel.Spec.PoolRef, c.PoolNamespacedName.Name)
-		klog.V(1).Infof("Adding/Updating InferenceModel: %v", infModel.Spec.ModelName)
+		klogV.InfoS("Updating datastore", "poolRef", infModel.Spec.PoolRef, "serverPoolName", c.PoolNamespacedName)
+		klogV.InfoS("Adding/Updating InferenceModel", "modelName", infModel.Spec.ModelName)
 		c.Datastore.InferenceModels.Store(infModel.Spec.ModelName, infModel)
 		return
 	}
-	klog.V(logutil.DEFAULT).Infof("Removing/Not adding InferenceModel: %v", infModel.Spec.ModelName)
+	klogV.InfoS("Removing/Not adding InferenceModel", "modelName", infModel.Spec.ModelName)
 	// If we get here. The model is not relevant to this pool, remove.
 	c.Datastore.InferenceModels.Delete(infModel.Spec.ModelName)
 }

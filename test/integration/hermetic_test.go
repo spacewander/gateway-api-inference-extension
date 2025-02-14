@@ -9,7 +9,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"path/filepath"
 	"testing"
@@ -23,17 +22,19 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/testing/protocmp"
 	"google.golang.org/protobuf/types/known/structpb"
-	"inference.networking.x-k8s.io/gateway-api-inference-extension/api/v1alpha1"
-	"inference.networking.x-k8s.io/gateway-api-inference-extension/pkg/ext-proc/backend"
-	runserver "inference.networking.x-k8s.io/gateway-api-inference-extension/pkg/ext-proc/server"
-	extprocutils "inference.networking.x-k8s.io/gateway-api-inference-extension/pkg/ext-proc/test"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	k8syaml "k8s.io/apimachinery/pkg/util/yaml"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	klog "k8s.io/klog/v2"
+	ctrl "sigs.k8s.io/controller-runtime"
 	k8sclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
+	"sigs.k8s.io/gateway-api-inference-extension/api/v1alpha1"
+	"sigs.k8s.io/gateway-api-inference-extension/pkg/ext-proc/backend"
+	runserver "sigs.k8s.io/gateway-api-inference-extension/pkg/ext-proc/server"
+	extprocutils "sigs.k8s.io/gateway-api-inference-extension/pkg/ext-proc/test"
+	logutil "sigs.k8s.io/gateway-api-inference-extension/pkg/ext-proc/util/logging"
 	"sigs.k8s.io/yaml"
 )
 
@@ -406,7 +407,6 @@ func TestKubeInferenceModelRequest(t *testing.T) {
 }
 
 func setUpHermeticServer(pods []*backend.PodMetrics) (client extProcPb.ExternalProcessor_ProcessClient, cleanup func()) {
-
 	ps := make(backend.PodSet)
 	pms := make(map[backend.Pod]*backend.PodMetrics)
 	for _, pod := range pods {
@@ -415,7 +415,14 @@ func setUpHermeticServer(pods []*backend.PodMetrics) (client extProcPb.ExternalP
 	}
 	pmc := &backend.FakePodMetricsClient{Res: pms}
 
-	server := serverRunner.Start(backend.NewK8sDataStore(backend.WithPods(pods)), pmc)
+	serverCtx, stopServer := context.WithCancel(context.Background())
+	go func() {
+		if err := serverRunner.AsRunnable(
+			backend.NewK8sDataStore(backend.WithPods(pods)), pmc,
+		).Start(serverCtx); err != nil {
+			logutil.Fatal(err, "Failed to start ext-proc server")
+		}
+	}()
 
 	// Wait the reconciler to populate the datastore.
 	time.Sleep(10 * time.Second)
@@ -424,18 +431,18 @@ func setUpHermeticServer(pods []*backend.PodMetrics) (client extProcPb.ExternalP
 	// Create a grpc connection
 	conn, err := grpc.NewClient(address, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		log.Fatalf("Failed to connect to %v: %v", address, err)
+		logutil.Fatal(err, "Failed to connect", "address", address)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	client, err = extProcPb.NewExternalProcessorClient(conn).Process(ctx)
 	if err != nil {
-		log.Fatalf("Failed to create client: %v", err)
+		logutil.Fatal(err, "Failed to create client")
 	}
 	return client, func() {
 		cancel()
 		conn.Close()
-		server.GracefulStop()
+		stopServer()
 	}
 }
 
@@ -447,9 +454,8 @@ func BeforeSuit() {
 		ErrorIfCRDPathMissing: true,
 	}
 	cfg, err := testEnv.Start()
-
 	if err != nil {
-		log.Fatalf("Failed to start test environment, cfg: %v error: %v", cfg, err)
+		logutil.Fatal(err, "Failed to start test environment", "config", cfg)
 	}
 
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
@@ -457,26 +463,34 @@ func BeforeSuit() {
 
 	k8sClient, err = k8sclient.New(cfg, k8sclient.Options{Scheme: scheme})
 	if err != nil {
-		log.Fatalf("Failed to start k8s Client: %v", err)
+		logutil.Fatal(err, "Failed to start k8s Client")
 	} else if k8sClient == nil {
-		log.Fatalf("No error, but returned kubernetes client is nil, cfg: %v", cfg)
+		logutil.Fatal(nil, "No error, but returned kubernetes client is nil", "config", cfg)
+	}
+
+	// Init runtime.
+	mgr, err := ctrl.NewManager(cfg, ctrl.Options{Scheme: scheme})
+	if err != nil {
+		logutil.Fatal(err, "Failed to create controller manager")
 	}
 
 	serverRunner = runserver.NewDefaultExtProcServerRunner()
 	// Adjust from defaults
 	serverRunner.PoolName = "vllm-llama2-7b-pool"
-	serverRunner.Scheme = scheme
-	serverRunner.Config = cfg
 	serverRunner.Datastore = backend.NewK8sDataStore()
 
-	serverRunner.Setup()
+	if err := serverRunner.SetupWithManager(mgr); err != nil {
+		logutil.Fatal(err, "Failed to setup server runner")
+	}
 
 	// Start the controller manager in go routine, not blocking
 	go func() {
-		serverRunner.StartManager()
+		if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
+			logutil.Fatal(err, "Failed to start manager")
+		}
 	}()
 
-	klog.Info("Setting up hermetic ExtProc server")
+	klog.InfoS("Setting up hermetic ExtProc server")
 	klog.InitFlags(nil)
 	flag.Parse()
 	// Configure klog verbosity levels to print ext proc logs.
@@ -486,30 +500,30 @@ func BeforeSuit() {
 	manifestsPath := filepath.Join("..", "testdata", "inferencepool-with-model-hermetic.yaml")
 	docs, err := readDocuments(manifestsPath)
 	if err != nil {
-		log.Fatalf("Can't read object manifests at path %v, %v", manifestsPath, err)
+		logutil.Fatal(err, "Can't read object manifests", "path", manifestsPath)
 	}
 
 	for _, doc := range docs {
 		inferenceModel := &v1alpha1.InferenceModel{}
 		if err = yaml.Unmarshal(doc, inferenceModel); err != nil {
-			log.Fatalf("Can't unmarshal object: %v", doc)
+			logutil.Fatal(err, "Can't unmarshal object", "document", doc)
 		}
 		if inferenceModel.Kind == "InferenceModel" {
-			klog.Infof("Creating inference model: %+v", inferenceModel)
+			klog.InfoS("Creating inference model", "model", inferenceModel)
 			if err := k8sClient.Create(context.Background(), inferenceModel); err != nil {
-				log.Fatalf("unable to create inferenceModel %v: %v", inferenceModel.Name, err)
+				logutil.Fatal(err, "Unable to create inferenceModel", "modelName", inferenceModel.Name)
 			}
 		}
 	}
 	for _, doc := range docs {
 		inferencePool := &v1alpha1.InferencePool{}
 		if err = yaml.Unmarshal(doc, inferencePool); err != nil {
-			log.Fatalf("Can't unmarshal object: %v", doc)
+			logutil.Fatal(err, "Can't unmarshal object", "document", doc)
 		}
 		if inferencePool.Kind == "InferencePool" {
-			klog.Infof("Creating inference pool: %+v", inferencePool)
+			klog.InfoS("Creating inference pool", "pool", inferencePool)
 			if err := k8sClient.Create(context.Background(), inferencePool); err != nil {
-				log.Fatalf("unable to create inferencePool %v: %v", inferencePool.Name, err)
+				logutil.Fatal(err, "Unable to create inferencePool", "poolName", inferencePool.Name)
 			}
 		}
 	}

@@ -20,13 +20,13 @@ package v1alpha1
 import (
 	context "context"
 
-	apiv1alpha1 "inference.networking.x-k8s.io/gateway-api-inference-extension/api/v1alpha1"
-	applyconfigurationapiv1alpha1 "inference.networking.x-k8s.io/gateway-api-inference-extension/client-go/applyconfiguration/api/v1alpha1"
-	scheme "inference.networking.x-k8s.io/gateway-api-inference-extension/client-go/clientset/versioned/scheme"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
 	watch "k8s.io/apimachinery/pkg/watch"
 	gentype "k8s.io/client-go/gentype"
+	apiv1alpha1 "sigs.k8s.io/gateway-api-inference-extension/api/v1alpha1"
+	applyconfigurationapiv1alpha1 "sigs.k8s.io/gateway-api-inference-extension/client-go/applyconfiguration/api/v1alpha1"
+	scheme "sigs.k8s.io/gateway-api-inference-extension/client-go/clientset/versioned/scheme"
 )
 
 // InferencePoolsGetter has a method to return a InferencePoolInterface.
@@ -59,7 +59,7 @@ type inferencePools struct {
 }
 
 // newInferencePools returns a InferencePools
-func newInferencePools(c *ApiV1alpha1Client, namespace string) *inferencePools {
+func newInferencePools(c *InferenceV1alpha1Client, namespace string) *inferencePools {
 	return &inferencePools{
 		gentype.NewClientWithListAndApply[*apiv1alpha1.InferencePool, *apiv1alpha1.InferencePoolList, *applyconfigurationapiv1alpha1.InferencePoolApplyConfiguration](
 			"inferencepools",

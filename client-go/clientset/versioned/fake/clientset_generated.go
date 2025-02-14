@@ -18,15 +18,15 @@ limitations under the License.
 package fake
 
 import (
-	applyconfiguration "inference.networking.x-k8s.io/gateway-api-inference-extension/client-go/applyconfiguration"
-	clientset "inference.networking.x-k8s.io/gateway-api-inference-extension/client-go/clientset/versioned"
-	apiv1alpha1 "inference.networking.x-k8s.io/gateway-api-inference-extension/client-go/clientset/versioned/typed/api/v1alpha1"
-	fakeapiv1alpha1 "inference.networking.x-k8s.io/gateway-api-inference-extension/client-go/clientset/versioned/typed/api/v1alpha1/fake"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/discovery"
 	fakediscovery "k8s.io/client-go/discovery/fake"
 	"k8s.io/client-go/testing"
+	applyconfiguration "sigs.k8s.io/gateway-api-inference-extension/client-go/applyconfiguration"
+	clientset "sigs.k8s.io/gateway-api-inference-extension/client-go/clientset/versioned"
+	inferencev1alpha1 "sigs.k8s.io/gateway-api-inference-extension/client-go/clientset/versioned/typed/api/v1alpha1"
+	fakeinferencev1alpha1 "sigs.k8s.io/gateway-api-inference-extension/client-go/clientset/versioned/typed/api/v1alpha1/fake"
 )
 
 // NewSimpleClientset returns a clientset that will respond with the provided objects.
@@ -115,7 +115,7 @@ var (
 	_ testing.FakeClient  = &Clientset{}
 )
 
-// ApiV1alpha1 retrieves the ApiV1alpha1Client
-func (c *Clientset) ApiV1alpha1() apiv1alpha1.ApiV1alpha1Interface {
-	return &fakeapiv1alpha1.FakeApiV1alpha1{Fake: &c.Fake}
+// InferenceV1alpha1 retrieves the InferenceV1alpha1Client
+func (c *Clientset) InferenceV1alpha1() inferencev1alpha1.InferenceV1alpha1Interface {
+	return &fakeinferencev1alpha1.FakeInferenceV1alpha1{Fake: &c.Fake}
 }

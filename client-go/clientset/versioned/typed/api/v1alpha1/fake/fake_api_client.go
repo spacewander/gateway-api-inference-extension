@@ -18,26 +18,26 @@ limitations under the License.
 package fake
 
 import (
-	v1alpha1 "inference.networking.x-k8s.io/gateway-api-inference-extension/client-go/clientset/versioned/typed/api/v1alpha1"
 	rest "k8s.io/client-go/rest"
 	testing "k8s.io/client-go/testing"
+	v1alpha1 "sigs.k8s.io/gateway-api-inference-extension/client-go/clientset/versioned/typed/api/v1alpha1"
 )
 
-type FakeApiV1alpha1 struct {
+type FakeInferenceV1alpha1 struct {
 	*testing.Fake
 }
 
-func (c *FakeApiV1alpha1) InferenceModels(namespace string) v1alpha1.InferenceModelInterface {
+func (c *FakeInferenceV1alpha1) InferenceModels(namespace string) v1alpha1.InferenceModelInterface {
 	return newFakeInferenceModels(c, namespace)
 }
 
-func (c *FakeApiV1alpha1) InferencePools(namespace string) v1alpha1.InferencePoolInterface {
+func (c *FakeInferenceV1alpha1) InferencePools(namespace string) v1alpha1.InferencePoolInterface {
 	return newFakeInferencePools(c, namespace)
 }
 
 // RESTClient returns a RESTClient that is used to communicate
 // with API server by this client implementation.
-func (c *FakeApiV1alpha1) RESTClient() rest.Interface {
+func (c *FakeInferenceV1alpha1) RESTClient() rest.Interface {
 	var ret *rest.RESTClient
 	return ret
 }
